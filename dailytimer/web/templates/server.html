@@ -97,7 +97,7 @@
     {% for p in status.ports %}
       <tr class="{{ 'public' if p.public else '' }}">
         <td><b>{{ p.port }}</b>/{{ p.proto }}</td>
-        <td class="small">{{ p.addresses|join(', ') }} {% if p.public %}<span class="chip red">наружу</span>{% else %}<span class="chip">локально</span>{% endif %}</td>
+        <td class="small">{{ p.addresses|join(', ') }} {% if p.public %}<span class="chip red">наружу</span>{% elif p.internal %}<span class="chip">внутри Docker</span>{% else %}<span class="chip">локально</span>{% endif %}</td>
         <td class="small">{% if p.container %}🐳 {{ p.container }}{% elif p.process %}{{ p.process }}{% if p.pid %} <span class="muted">pid {{ p.pid }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
       </tr>
     {% endfor %}

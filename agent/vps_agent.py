@@ -21,6 +21,7 @@ import hmac
 import json
 import os
 import platform
+import pwd
 import re
 import shutil
 import socket
@@ -38,6 +39,16 @@ SKIP_FS = {"proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "cgroup", "cgroup2", 
            "pstore", "bpf", "tracefs", "debugfs", "mqueue", "hugetlbfs", "fusectl", "configfs", "autofs", "nsfs",
            "ramfs", "rpc_pipefs", "binfmt_misc", "efivarfs", "fuse.lxcfs"}
 TCP_STATES = {"0A": "LISTEN"}
+
+
+def ensure_home() -> None:
+    """systemd не задаёт HOME службам — без него git не видит сохранённые учётные данные GitHub."""
+    if not os.environ.get("HOME"):
+        try:
+            os.environ["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
+        except KeyError:
+            os.environ["HOME"] = "/root"
+    os.environ.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 
 
 def load_env(path: str = ENV_FILE) -> None:
@@ -206,7 +217,13 @@ def listening_ports(containers: list[dict[str, Any]] | None = None) -> list[dict
         item["public"] = item["public"] or public
         if name and not item["process"]:
             item["process"], item["pid"] = name, pid
-    return sorted(result.values(), key=lambda x: (x["proto"], x["port"]))
+    for c in containers or []:
+        for item in c.get("internal", []):
+            key = (item["proto"], item["port"])
+            if key not in result:
+                result[key] = {"proto": item["proto"], "port": item["port"], "addresses": ["в сети Docker"],
+                               "public": False, "process": "", "pid": None, "container": c["name"], "internal": True}
+    return sorted(result.values(), key=lambda x: (x.get("internal", False), x["proto"], x["port"]))
 
 
 # ------------------------------------------------------------------ docker
@@ -232,11 +249,15 @@ def docker_containers() -> list[dict[str, Any]]:
             row = json.loads(line)
         except ValueError:
             continue
-        published = sorted({int(p) for p in re.findall(r":(\d+)->", row.get("Ports", ""))})
+        ports_text = row.get("Ports", "")
+        published = sorted({int(p) for p in re.findall(r":(\d+)->", ports_text)})
+        # Порты внутри контейнера без проброса наружу: «11434/tcp» (не часть «…->11434/tcp»).
+        internal = sorted({(int(p), proto) for p, proto in re.findall(r"(?:^|,\s*)(\d+)/(tcp|udp)", ports_text)})
         st = stats.get(row.get("Names", ""), {})
         containers.append({
             "name": row.get("Names", ""), "image": row.get("Image", ""), "state": row.get("State", ""),
-            "status": row.get("Status", ""), "ports": row.get("Ports", ""), "published": published,
+            "status": row.get("Status", ""), "ports": ports_text, "published": published,
+            "internal": [{"port": p, "proto": proto} for p, proto in internal],
             "project": row.get("Labels", "") and dict(
                 kv.split("=", 1) for kv in row["Labels"].split(",") if "=" in kv).get("com.docker.compose.project", ""),
             "cpu": st.get("CPUPerc", ""), "mem": st.get("MemUsage", ""),
@@ -445,6 +466,7 @@ def default_bind() -> str:
 
 
 def main() -> None:
+    ensure_home()
     load_env()
     if not os.environ.get("AGENT_TOKEN"):
         raise SystemExit("AGENT_TOKEN не задан")

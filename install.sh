@@ -25,7 +25,7 @@ if [ ! -f .env ]; then
   elif [ "$mem_gb" -ge 7 ];  then model="gemma3:4b"
   elif [ "$mem_gb" -ge 4 ];  then model="qwen2.5:3b"
   else                            model="qwen2.5:1.5b"; fi
-  password=$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)
+  password=$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')
   cat > .env <<EOF
 DAILYTIMER_USER=admin
 DAILYTIMER_PASSWORD=$password
@@ -43,7 +43,8 @@ set -a; . ./.env; set +a
 mem_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
 OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
 mkdir -p data
-docker compose up -d --build
+docker compose up -d --build --remove-orphans
+git rev-parse HEAD > data/deployed_commit 2>/dev/null || true
 
 echo "==> Скачиваю локальную модель ИИ $OLLAMA_MODEL (один раз, 1–5 ГБ)"
 for _ in 1 2 3 4 5; do

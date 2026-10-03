@@ -350,6 +350,11 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         storage.save_snapshot("telegram", {"chats": []})
         return back("social", info="Telegram-аккаунт отключён")
 
+    @app.post("/sync", dependencies=[Depends(auth)])
+    def run_sync() -> Any:
+        in_background(lambda: sync.sync_all(storage, force=True))
+        return RedirectResponse("/?busy=1", status_code=303)
+
     @app.post("/plan", dependencies=[Depends(auth)])
     def run_plan() -> Any:
         in_background(lambda: sync.build_plan(storage), plan_lock)

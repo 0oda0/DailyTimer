@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
-# Автообновление DailyTimer: если в репозитории есть новые коммиты — подтягивает их и перезапускает.
-# После перезапуска бот пришлёт в Telegram «DailyTimer обновлён» со списком нового.
+# Автообновление DailyTimer: подтягивает новые коммиты, пересобирает и перезапускает.
+# Запоминает реально запущенную версию (data/deployed_commit): если сборка упала,
+# следующий запуск попробует снова, а не решит, что «обновлений нет».
 # Запуск вручную: bash update.sh   (install.sh ставит его в cron на 04:30 каждую ночь)
 set -euo pipefail
 cd "$(dirname "$0")"
+mkdir -p data
 branch=$(git rev-parse --abbrev-ref HEAD)
 git fetch -q origin "$branch"
-if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$branch")" ]; then
-  echo "$(date '+%F %T') обновлений нет"
+remote=$(git rev-parse "origin/$branch")
+deployed=$(cat data/deployed_commit 2>/dev/null || true)
+if [ "$(git rev-parse HEAD)" = "$remote" ] && [ "$deployed" = "$remote" ]; then
+  echo "$(date '+%F %T') обновлений нет ($(git rev-parse --short HEAD))"
   exit 0
 fi
 git pull -q --ff-only origin "$branch"
-docker compose up -d --build
+echo "$(date '+%F %T') собираю $(git rev-parse --short HEAD)…"
+if ! docker compose up -d --build --remove-orphans; then
+  echo "$(date '+%F %T') ОШИБКА: сборка не удалась, продолжает работать прежняя версия" >&2
+  exit 1
+fi
+git rev-parse HEAD > data/deployed_commit
 docker image prune -f >/dev/null 2>&1 || true
 echo "$(date '+%F %T') обновлено до $(git rev-parse --short HEAD)"
 
