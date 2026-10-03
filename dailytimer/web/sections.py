@@ -20,7 +20,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     "social": {
         "icon": "💬", "title": "Соцсети и мессенджеры",
         "about": "Telegram: чаты, которые ждут ответа; уведомления от бота",
-        "fields": ["telegram_bot_token", "telegram_notify_mail"],
+        "fields": ["telegram_bot_token", "telegram_notify_mail", "telegram_chat_bot", "remind_lessons", "remind_tasks"],
     },
     "dev": {
         "icon": "🐙", "title": "Разработка",
@@ -40,7 +40,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     "other": {
         "icon": "⚙️", "title": "Режим дня и прочее",
         "about": "Подъём, отбой, время плана, погода, другие календари, новости",
-        "fields": ["timezone", "wake_time", "sleep_time", "plan_time", "sync_interval_minutes",
+        "fields": ["timezone", "wake_time", "sleep_time", "plan_time", "evening_time", "sync_interval_minutes",
                    "weather_city", "calendars_extra", "rss_feeds"],
     },
 }

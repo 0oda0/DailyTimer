@@ -5,9 +5,15 @@
   {% else %}<span class="badge">не подключено</span>{% endif %}
 {%- endmacro %}
 {% macro mail_row(m) -%}
-  <div class="row">
-    <b>{{ m.subject }}</b> <span class="muted">— {{ m.from }}</span>
-    {% if m.summary %}<div class="small">{{ m.summary }}</div>{% endif %}
+  <div class="row mail-row">
+    <div><b>{{ m.subject }}</b> <span class="muted">— {{ m.from }}</span>
+    {% if m.summary %}<div class="small">{{ m.summary }}</div>{% endif %}</div>
+    <form method="post" action="/tasks/add" class="inline">
+      <input type="hidden" name="text" value="{{ 'Ответить: ' if m.needs_reply else '' }}{{ m.subject }} сегодня">
+      <input type="hidden" name="source" value="gmail"><input type="hidden" name="source_ref" value="{{ m.uid }}">
+      <input type="hidden" name="notes" value="{{ m.from }}: {{ m.summary }}">
+      <button class="ghost small" title="Сделать задачей">→ в задачи</button>
+    </form>
   </div>
 {%- endmacro %}
 {% block head %}{% if busy %}<meta http-equiv="refresh" content="8;url=/">{% endif %}{% endblock %}
@@ -27,7 +33,41 @@
 <div class="card notice">Пока ничего не подключено. Зайди в <a href="/settings">Подключения</a> — достаточно ввести логины и пароли один раз, дальше всё обновляется само.</div>
 {% endif %}
 
+{% include "_quickadd.html" %}
+
 <div class="grid">
+  <section class="card">
+    <div class="actions"><h2>🕒 Лента дня</h2>
+      <form method="post" action="/tasks/plan"><button class="small" title="Разложить задачи без времени по свободным окнам">🗓 Разложить</button></form></div>
+    {% for i in timeline %}
+      <div class="tl {{ i.kind }}{% if i.kind == 'task' %} p{{ i.priority }}{% endif %}">
+        <span class="tl-time">{{ i.start }}–{{ i.end }}</span>
+        <span class="tl-title">{% if i.kind == 'lesson' %}🎓 {% elif i.kind == 'task' %}{{ '🤖 ' if i.auto else '✅ ' }}{% endif %}{{ i.title }}</span>
+        {% if i.sub %}<span class="muted small">{{ i.sub }}</span>{% endif %}
+      </div>
+    {% else %}<p class="muted">День свободен.</p>{% endfor %}
+  </section>
+
+  <section class="card">
+    <h2>📌 Задачи на сегодня <a class="small" href="/tasks">все →</a></h2>
+    {% for t in task_views.overdue + task_views.today %}{% include "_task.html" %}{% else %}
+      <p class="muted small">На сегодня задач нет. Добавь через поле выше или попроси в <a href="/chat">чате</a>.</p>{% endfor %}
+    {% if focus_minutes %}<p class="muted small">⏱ В фокусе сегодня: {{ focus_minutes }} мин</p>{% endif %}
+  </section>
+
+  {% if habits %}
+  <section class="card">
+    <h2>🔁 Привычки <a class="small" href="/habits">все →</a></h2>
+    <div class="habit-row">
+      {% for h in habits %}
+        <form method="post" action="/habits/{{ h.id }}/toggle" class="inline">
+          <button class="habit-chip {% if h.done_today %}done{% endif %}" title="серия {{ h.streak }} дн.">{{ h.icon }} {{ h.name }}{% if h.streak %} · 🔥{{ h.streak }}{% endif %}</button>
+        </form>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   <section class="card wide attention">
     <h2>Почта: что требует внимания {{ status(snaps.gmail) }}</h2>
     {% if digest %}<p class="digest">{{ digest }}</p>{% endif %}

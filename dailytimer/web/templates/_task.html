@@ -1,0 +1,41 @@
+{# Строка задачи: чекбокс, название, метки, действия и форма правки. Ожидает переменную t. #}
+<div class="task p{{ t.priority }}{% if t.overdue %} overdue{% endif %}">
+  <form method="post" action="/tasks/{{ t.id }}/done" class="inline"><button class="check-btn" title="Выполнено"></button></form>
+  <details class="task-body">
+    <summary>
+      <span class="task-title">{{ t.title }}</span>
+      {% if t.due_label %}<span class="chip{% if t.overdue %} red{% endif %}">{{ t.due_label }}{% if t.due_time %} {{ t.due_time }}{% endif %}</span>{% endif %}
+      {% if t.scheduled_start and not t.due_time %}<span class="chip">⏰ {{ t.scheduled_start[11:16] }}</span>{% endif %}
+      {% if t.recur_name %}<span class="chip">🔁 {{ t.recur_name }}</span>{% endif %}
+      {% for tg in t.tag_list %}<a class="chip tag" href="/tasks?tag={{ tg }}">#{{ tg }}</a>{% endfor %}
+      <span class="chip muted">{{ t.duration }} мин</span>
+    </summary>
+    <form method="post" action="/tasks/{{ t.id }}/edit" class="task-edit">
+      <input name="title" value="{{ t.title }}">
+      <textarea name="notes" rows="2" placeholder="Заметки">{{ t.notes }}</textarea>
+      <div class="row-fields">
+        <label>Дата <input type="date" name="due_date" value="{{ t.due_date or '' }}"></label>
+        <label>Время <input type="time" name="due_time" value="{{ t.due_time or '' }}"></label>
+        <label>Минут <input type="number" name="duration" min="5" step="5" value="{{ t.duration }}"></label>
+        <label>Приоритет
+          <select name="priority">{% for p in [1, 2, 3, 4] %}<option value="{{ p }}" {% if t.priority == p %}selected{% endif %}>{{ p }}</option>{% endfor %}</select>
+        </label>
+        <label>Повтор
+          <select name="recur">
+            {% for value, text in [('', 'нет'), ('daily', 'каждый день'), ('weekdays', 'по будням'), ('weekly', 'каждую неделю'), ('monthly', 'каждый месяц')] %}
+              <option value="{{ value }}" {% if t.recur == value %}selected{% endif %}>{{ text }}</option>
+            {% endfor %}
+            {% if t.recur and t.recur.startswith('weekly:') %}<option value="{{ t.recur }}" selected>{{ t.recur_name }}</option>{% endif %}
+          </select>
+        </label>
+        <label>Теги <input name="tags" value="{{ t.tag_list|join(', ') }}"></label>
+      </div>
+      <div class="task-actions">
+        <button class="primary">Сохранить</button>
+        <button formaction="/tasks/{{ t.id }}/tomorrow">На завтра</button>
+        <a class="button" href="/focus?task={{ t.id }}">▶ Фокус</a>
+        <button formaction="/tasks/{{ t.id }}/delete" class="danger" onclick="return confirm('Удалить задачу?')">Удалить</button>
+      </div>
+    </form>
+  </details>
+</div>

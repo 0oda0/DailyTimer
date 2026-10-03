@@ -4,17 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DailyTimer</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#3b5bdb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="stylesheet" href="/static/style.css">
   {% block head %}{% endblock %}
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="/">DailyTimer</a>
+    <a class="brand" href="/">⏱ DailyTimer</a>
     <nav>
-      <a href="/">Сегодня</a>
-      <a href="/settings">Подключения</a>
+      {% set path = request.url.path %}
+      {% for href, label in [('/', 'Сегодня'), ('/tasks', 'Задачи'), ('/chat', 'Чат с ИИ'), ('/habits', 'Привычки'), ('/focus', 'Фокус'), ('/review', 'Итоги'), ('/settings', 'Подключения')] %}
+        <a href="{{ href }}" class="{% if (href == '/' and path == '/') or (href != '/' and path.startswith(href)) %}active{% endif %}">{{ label }}</a>
+      {% endfor %}
     </nav>
   </header>
   <main>{% block content %}{% endblock %}</main>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

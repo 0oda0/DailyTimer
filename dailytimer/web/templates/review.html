@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="actions">
+  <h1>Итоги</h1>
+</div>
+{% if request.query_params.get('saved') %}<div class="card notice">Сохранено.</div>{% endif %}
+<div class="grid">
+  <section class="card">
+    <h2>🌙 Закрыть день — {{ day.strftime('%d.%m') }}</h2>
+    <form method="post" action="/review/save" class="settings">
+      <input type="hidden" name="day" value="{{ day.isoformat() }}">
+      <div class="moods">
+        {% for value, emoji in moods.items() %}
+          <label class="mood"><input type="radio" name="mood" value="{{ value }}" {% if entry.mood == value %}checked{% endif %}><span>{{ emoji }}</span></label>
+        {% endfor %}
+      </div>
+      <label>Что получилось сегодня <textarea name="wins" rows="3">{{ entry.wins }}</textarea></label>
+      <label>Мысли, заметки <textarea name="notes" rows="3">{{ entry.notes }}</textarea></label>
+      <label>Планы на завтра — по строке, можно быстрым вводом
+        <textarea name="tomorrow" rows="3" placeholder="подготовиться к семинару 1ч !2&#10;позвонить в деканат в 10">{{ entry.tomorrow }}</textarea></label>
+      <label class="check"><input type="checkbox" name="make_tasks"> Создать из этих строк задачи на завтра</label>
+      {% if left_today %}
+        <label class="check"><input type="checkbox" name="move_left"> Перенести на завтра невыполненное ({{ left_today|length }}): {{ left_today[:3]|map(attribute='title')|join(', ') }}{% if left_today|length > 3 %}…{% endif %}</label>
+      {% endif %}
+      <button class="primary">Сохранить</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>📊 Последние 7 дней</h2>
+    <p>Выполнено задач: <b>{{ stats.total_done }}</b> · в фокусе: <b>{{ stats.total_focus }}</b> мин</p>
+    <div class="bars">
+      {% for s in stats.series %}
+        <div class="bar-col" title="{{ s.day }}: задач {{ s.done }}, фокус {{ s.focus }} мин, привычек {{ s.habits }}">
+          <div class="bar-pair">
+            <div class="bar tasks" style="height: {{ (s.done / stats.max_done * 100)|round }}%"></div>
+            <div class="bar focus" style="height: {{ (s.focus / stats.max_focus * 100)|round }}%"></div>
+          </div>
+          <div class="bar-label">{{ s.label }}{% if s.mood %}<br>{{ moods[s.mood] }}{% endif %}</div>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="legend small"><span class="sw tasks"></span> задачи <span class="sw focus"></span> фокус</div>
+  </section>
+
+  <section class="card wide">
+    <div class="actions">
+      <h2>🧭 Итоги недели от ИИ</h2>
+      <form method="post" action="/review/ai"><button class="primary">Подвести итоги</button></form>
+    </div>
+    {% if review_html %}<div class="plan">{{ review_html|safe }}</div><p class="muted small">{{ review_at|replace('T', ' ') }}</p>
+    {% else %}<p class="muted">ИИ проанализирует выполненные задачи, фокус и дневник и предложит 3 фокуса на следующую неделю.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>✔️ Сделано за неделю ({{ done|length }})</h2>
+    {% for t in done[:30] %}<div class="row small">{{ t.done_at[5:10]|replace('-', '.') }} · {{ t.title }}</div>{% else %}<p class="muted small">Пока ничего.</p>{% endfor %}
+  </section>
+
+  <section class="card">
+    <h2>📔 Дневник</h2>
+    {% for e in recent %}
+      <div class="row small"><a href="/review?day={{ e.day }}">{{ e.day[8:10] }}.{{ e.day[5:7] }}</a> {{ moods.get(e.mood, '') }} {{ e.wins[:120] }}</div>
+    {% else %}<p class="muted small">Записей пока нет.</p>{% endfor %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Фокус</h1>
+<div class="grid">
+  <section class="card focus-card">
+    <div class="modes">
+      <button type="button" class="chip active" data-min="25" data-kind="focus">Помодоро 25</button>
+      <button type="button" class="chip" data-min="50" data-kind="focus">Глубокая работа 50</button>
+      <button type="button" class="chip" data-min="90" data-kind="focus">Поток 90</button>
+      <button type="button" class="chip" data-min="5" data-kind="break">Перерыв 5</button>
+      <button type="button" class="chip" data-min="15" data-kind="break">Длинный перерыв 15</button>
+    </div>
+    <div id="clock" class="clock">25:00</div>
+    <label class="muted small">Над чем работаю
+      <select id="task">
+        <option value="">— без задачи —</option>
+        {% for t in tasks %}<option value="{{ t.id }}" {% if selected == t.id %}selected{% endif %}>{{ t.title }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="focus-buttons">
+      <button class="primary big" id="start">Старт</button>
+      <button id="reset">Сброс</button>
+    </div>
+    <p class="muted small">Таймер работает и в фоновой вкладке. По окончании — звук и уведомление, сессия сохранится в статистику.</p>
+  </section>
+  <section class="card">
+    <h2>Сегодня в фокусе: <span id="today-min">{{ minutes }}</span> мин</h2>
+    {% for s in sessions %}
+      <div class="row small">{{ s.started_at[11:16] }} · {{ s.minutes }} мин · {{ '☕ перерыв' if s.kind == 'break' else (s.title or 'без задачи') }}</div>
+    {% else %}<p class="muted small">Сессий пока не было.</p>{% endfor %}
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  let minutes = 25, kind = 'focus', endAt = null, left = 25 * 60, tick = null;
+  const clock = document.getElementById('clock'), start = document.getElementById('start');
+  const fmt = s => String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  const draw = () => { clock.textContent = fmt(left); document.title = (endAt ? fmt(left) + ' · ' : '') + 'DailyTimer'; };
+  function beep() {
+    try { const a = new AudioContext(), o = a.createOscillator(); o.connect(a.destination); o.frequency.value = 880;
+          o.start(); setTimeout(() => o.stop(), 600); } catch (e) {}
+  }
+  async function finish() {
+    clearInterval(tick); tick = null; endAt = null; start.textContent = 'Старт'; beep();
+    const msg = kind === 'focus' ? 'Фокус-сессия завершена — сделай перерыв' : 'Перерыв окончен — за работу!';
+    if (window.Notification && Notification.permission === 'granted') new Notification('DailyTimer', {body: msg});
+    const r = await fetch('/api/focus', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({minutes, kind, task_id: document.getElementById('task').value || null})});
+    if (r.ok) { const d = await r.json(); document.getElementById('today-min').textContent = d.today; }
+    left = minutes * 60; draw();
+  }
+  function run() {
+    tick = setInterval(() => { left = Math.max(0, Math.round((endAt - Date.now()) / 1000)); draw(); if (!left) finish(); }, 500);
+  }
+  start.addEventListener('click', () => {
+    if (window.Notification && Notification.permission === 'default') Notification.requestPermission();
+    if (tick) { clearInterval(tick); tick = null; endAt = null; start.textContent = 'Продолжить'; return; }
+    endAt = Date.now() + left * 1000; start.textContent = 'Пауза'; run();
+  });
+  document.getElementById('reset').addEventListener('click', () => {
+    clearInterval(tick); tick = null; endAt = null; left = minutes * 60; start.textContent = 'Старт'; draw();
+  });
+  document.querySelectorAll('.modes .chip').forEach(b => b.addEventListener('click', () => {
+    if (tick) return;
+    document.querySelectorAll('.modes .chip').forEach(x => x.classList.remove('active'));
+    b.classList.add('active'); minutes = +b.dataset.min; kind = b.dataset.kind; left = minutes * 60; draw();
+  }));
+  draw();
+})();
+</script>
+{% endblock %}

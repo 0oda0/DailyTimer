@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Привычки</h1>
+<form method="post" action="/habits/add" class="quickadd habit-add">
+  <input name="icon" value="✅" class="icon-input" maxlength="4" title="Эмодзи">
+  <input name="name" placeholder="Новая привычка: зарядка, 20 страниц книги, английский 15 мин…" required>
+  <select name="per_week" title="Цель в неделю">
+    {% for n in range(7, 0, -1) %}<option value="{{ n }}">{{ n }} раз/нед</option>{% endfor %}
+  </select>
+  <button class="primary">Добавить</button>
+</form>
+
+{% for h in habits %}
+  <section class="card habit">
+    <div class="habit-head">
+      <form method="post" action="/habits/{{ h.id }}/toggle" class="inline">
+        <button class="habit-big {% if h.done_today %}done{% endif %}">{{ h.icon }}</button>
+      </form>
+      <div class="habit-info">
+        <b>{{ h.name }}</b>
+        <div class="muted small">🔥 серия {{ h.streak }} дн. · на этой неделе {{ h.week_count }} из {{ h.per_week }}</div>
+        <div class="progress"><div style="width: {{ [100, (h.week_count / h.per_week * 100)|round]|min }}%"></div></div>
+      </div>
+      <form method="post" action="/habits/{{ h.id }}/archive" class="inline"><button class="ghost" title="В архив" onclick="return confirm('Убрать привычку в архив?')">✕</button></form>
+    </div>
+    <div class="week-dots">
+      {% for d in h.last7 %}
+        <form method="post" action="/habits/{{ h.id }}/toggle" class="inline">
+          <input type="hidden" name="day" value="{{ d.day }}">
+          <button class="dot {% if d.done %}on{% endif %}" title="{{ d.day }}">{{ d.label }}</button>
+        </form>
+      {% endfor %}
+    </div>
+  </section>
+{% else %}
+  <p class="muted">Пока нет привычек. Добавь первую — отмечать можно здесь, на главной или попросив ассистента.</p>
+{% endfor %}
+{% endblock %}

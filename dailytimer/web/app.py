@@ -21,11 +21,14 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import sync
+from .. import bot, sync
 from ..ai import LOCAL_MODELS, AIClient
 from ..connectors import tg_account
+from ..life import Focus, Habits
+from ..tasks import Tasks, timeline
 from ..sorter import CATEGORIES
 from ..storage import DEFAULT_SETTINGS, SECRET_FIELDS, Storage
+from .planner_routes import register as register_planner
 from .sections import SECTIONS, section_status
 
 log = logging.getLogger(__name__)
@@ -85,6 +88,7 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, headers={"WWW-Authenticate": "Basic"})
 
     scheduler = BackgroundScheduler()
+    poller = bot.BotPoller(storage)
 
     def reschedule() -> None:
         settings = storage.get_settings()
@@ -103,12 +107,20 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         scheduler.add_job(
             morning, CronTrigger(hour=hour, minute=minute, timezone=tz), id="plan", replace_existing=True
         )
+        scheduler.add_job(lambda: bot.send_reminders(storage), "interval", minutes=1, id="reminders",
+                          replace_existing=True)
+        e_hour, e_minute = (int(x) for x in (settings.get("evening_time") or "21:30").split(":"))
+        scheduler.add_job(
+            lambda: sync.notify(storage, storage.get_settings(), bot.evening_digest(storage)),
+            CronTrigger(hour=e_hour, minute=e_minute, timezone=tz), id="evening", replace_existing=True,
+        )
 
     if start_scheduler:
         @app.on_event("startup")
         def _start() -> None:
             reschedule()
             scheduler.start()
+            poller.start()
             ai = AIClient.from_settings(storage.get_settings())
             if ai and ai.local:  # скачать локальную модель заранее, в фоне
                 threading.Thread(target=ai.local.ensure_model, daemon=True).start()
@@ -116,8 +128,10 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         @app.on_event("shutdown")
         def _stop() -> None:
             scheduler.shutdown(wait=False)
+            poller.stop()
 
     plan_lock = threading.Lock()
+    task_store = Tasks(storage)
 
     def in_background(fn: Any, lock: threading.Lock | None = None) -> None:
         def runner() -> None:
@@ -168,6 +182,11 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
                 "cleaned": sum(1 for m in mails if m.get("actions")),
                 "mail_groups": [(k, CATEGORIES[k]["title"], by_cat[k]) for k in CATEGORIES if k in by_cat],
                 "receipts": subs_data.get("receipts", []),
+                "timeline": timeline(task_store, today, lessons, settings.get("wake_time") or "08:00",
+                                     settings.get("sleep_time") or "23:30"),
+                "task_views": task_store.views(today),
+                "habits": Habits(storage).overview(today),
+                "focus_minutes": Focus(storage).minutes_on(today),
                 "receipt_totals": totals,
                 "configured": any(
                     settings.get(k)
@@ -298,6 +317,8 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
     def api_state() -> Any:
         today = sync.today_for(storage.get_settings())
         return {"data": sync.collect(storage), "plan": storage.get_plan(today.isoformat())}
+
+    register_planner(app, storage, templates, auth, render_markdown)
 
     @app.get("/healthz")
     def health() -> dict[str, str]:

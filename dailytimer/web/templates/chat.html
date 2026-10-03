@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="chat-wrap">
+  <div class="actions">
+    <h1>Чат с ИИ</h1>
+    <form method="post" action="/chat/clear"><button>Очистить</button></form>
+  </div>
+  <div id="log" class="chat-log card">
+    {% if not history %}
+      <div class="msg assistant"><div class="bubble">
+        <p>Привет! Я знаю твоё расписание, задачи, почту, Telegram и привычки. Спроси что угодно или попроси сделать:</p>
+      </div></div>
+    {% endif %}
+    {% for m in history %}
+      <div class="msg {{ m.role }}"><div class="bubble">{{ m.html | safe }}</div></div>
+    {% endfor %}
+  </div>
+  <div class="suggest">
+    {% for s in ['Что у меня сегодня?', 'Распланируй день', 'Когда у меня следующая пара?', 'На какие письма надо ответить?', 'Помоги разбить курсовую на шаги и добавь их задачами', 'Что я делал на этой неделе?'] %}
+      <button type="button" class="chip" data-text="{{ s }}">{{ s }}</button>
+    {% endfor %}
+  </div>
+  <form id="chat-form" class="chat-form">
+    <textarea id="chat-input" rows="2" placeholder="Напиши сообщение… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
+    <button class="primary" id="send">Отправить</button>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const log = document.getElementById('log'), form = document.getElementById('chat-form');
+  const input = document.getElementById('chat-input'), send = document.getElementById('send');
+  const scroll = () => { log.scrollTop = log.scrollHeight; };
+  const esc = s => s.replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
+  const add = (role, html) => {
+    const el = document.createElement('div');
+    el.className = 'msg ' + role;
+    el.innerHTML = '<div class="bubble">' + html + '</div>';
+    log.appendChild(el); scroll(); return el;
+  };
+  async function submit(text) {
+    if (!text.trim()) return;
+    add('user', '<p>' + esc(text).replace(/\n/g, '<br>') + '</p>');
+    input.value = ''; send.disabled = true;
+    const wait = add('assistant', '<p class="muted typing">думаю…</p>');
+    try {
+      const r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                          body: JSON.stringify({text})});
+      const data = await r.json();
+      wait.querySelector('.bubble').innerHTML = data.html || '<p>(пустой ответ)</p>';
+    } catch (e) {
+      wait.querySelector('.bubble').innerHTML = '<p class="muted">Ошибка связи с сервером</p>';
+    }
+    send.disabled = false; input.focus(); scroll();
+  }
+  form.addEventListener('submit', e => { e.preventDefault(); submit(input.value); });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(input.value); } });
+  document.querySelectorAll('.suggest .chip').forEach(b => b.addEventListener('click', () => submit(b.dataset.text)));
+  scroll(); input.focus();
+})();
+</script>
+{% endblock %}

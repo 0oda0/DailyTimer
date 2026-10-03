@@ -68,6 +68,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "weather_city": "",
     "rss_feeds": "",
     "codeforces": False,
+    # Планер
+    "calendar_token": "",
+    "evening_time": "21:30",
+    "remind_lessons": True,
+    "remind_tasks": True,
+    "telegram_chat_bot": True,
 }
 
 
@@ -99,12 +105,51 @@ class Storage:
                 uid TEXT PRIMARY KEY, day TEXT, sender TEXT, subject TEXT, amount REAL, currency TEXT
             );
             CREATE TABLE IF NOT EXISTS notified (key TEXT PRIMARY KEY, at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL, notes TEXT DEFAULT '',
+                due_date TEXT, due_time TEXT, duration INTEGER DEFAULT 30,
+                priority INTEGER DEFAULT 4, project TEXT DEFAULT '', tags TEXT DEFAULT '',
+                recur TEXT DEFAULT '', remind INTEGER DEFAULT 1,
+                scheduled_start TEXT, status TEXT DEFAULT 'open',
+                source TEXT DEFAULT '', source_ref TEXT DEFAULT '', parent_id INTEGER,
+                created_at TEXT NOT NULL, done_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS habits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, icon TEXT DEFAULT '✅',
+                per_week INTEGER DEFAULT 7, archived INTEGER DEFAULT 0, created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS habit_log (habit_id INTEGER, day TEXT, PRIMARY KEY (habit_id, day));
+            CREATE TABLE IF NOT EXISTS focus_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER, started_at TEXT NOT NULL,
+                minutes INTEGER NOT NULL, kind TEXT DEFAULT 'focus'
+            );
+            CREATE TABLE IF NOT EXISTS journal (
+                day TEXT PRIMARY KEY, mood INTEGER, wins TEXT DEFAULT '', notes TEXT DEFAULT '',
+                tomorrow TEXT DEFAULT '', updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS chat (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, content TEXT NOT NULL,
+                channel TEXT DEFAULT 'web', created_at TEXT NOT NULL
+            );
             """
         )
         try:  # базы от первой версии
             self._db.execute("ALTER TABLE sorted_mail ADD COLUMN analysis TEXT")
         except sqlite3.OperationalError:
             pass
+
+    # ---- общий доступ для модулей задач, привычек и т.п. -----------------
+
+    def query(self, sql: str, params: tuple | list = ()) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(row) for row in self._db.execute(sql, params).fetchall()]
+
+    def execute(self, sql: str, params: tuple | list = ()) -> int:
+        """Выполняет запрос в транзакции, возвращает lastrowid (или число строк)."""
+        with self._lock, self._db:
+            cur = self._db.execute(sql, params)
+            return cur.lastrowid or cur.rowcount
 
     def _load_key(self) -> bytes:
         env_key = os.environ.get("DAILYTIMER_SECRET_KEY")

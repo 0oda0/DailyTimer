@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="actions">
+  <h1>Задачи</h1>
+  <div class="tabs">
+    <a href="/tasks?view=list" class="{% if view == 'list' %}active{% endif %}">Список</a>
+    <a href="/tasks?view=matrix" class="{% if view == 'matrix' %}active{% endif %}">Матрица Эйзенхауэра</a>
+  </div>
+  <form method="post" action="/tasks/plan"><button>🗓 Разложить сегодня по окнам</button></form>
+</div>
+{% include "_quickadd.html" %}
+
+{% if tags %}
+<div class="tagbar">
+  <a href="/tasks?view={{ view }}" class="chip {% if not tag %}active{% endif %}">все</a>
+  {% for tg in tags %}<a href="/tasks?view={{ view }}&tag={{ tg }}" class="chip tag {% if tag == tg %}active{% endif %}">#{{ tg }}</a>{% endfor %}
+</div>
+{% endif %}
+
+{% if view == 'matrix' %}
+<div class="matrix">
+  {% for key, title, hint in [('do', '🔥 Сделать сейчас', 'важно и срочно'), ('plan', '📅 Запланировать', 'важно, не срочно'), ('delegate', '⚡ Быстро разобраться', 'срочно, не важно'), ('drop', '🗑 Отложить или удалить', 'не важно и не срочно')] %}
+    <section class="card quad {{ key }}">
+      <h2>{{ title }} <span class="muted small">{{ hint }}</span></h2>
+      {% for t in matrix[key] %}{% include "_task.html" %}{% else %}<p class="muted small">Пусто</p>{% endfor %}
+    </section>
+  {% endfor %}
+</div>
+<p class="muted small">Важность — приоритет !1 или !2. Срочность — срок в ближайшие 2 дня.</p>
+{% else %}
+<div class="grid">
+  {% for key, title in [('overdue', '⚠️ Просрочено'), ('today', '📌 Сегодня'), ('upcoming', '📆 Ближайшая неделя'), ('inbox', '📥 Входящие (без срока)'), ('later', '🗂 Позже')] %}
+    {% if views[key] or key in ['today', 'inbox'] %}
+    <section class="card {% if key in ['today', 'overdue'] %}wide{% endif %}">
+      <h2>{{ title }} <span class="badge">{{ views[key]|length }}</span></h2>
+      {% for t in views[key] %}{% include "_task.html" %}{% else %}<p class="muted small">Пусто</p>{% endfor %}
+    </section>
+    {% endif %}
+  {% endfor %}
+  {% if done_today %}
+  <section class="card wide">
+    <h2>✔️ Сделано сегодня <span class="badge ok">{{ done_today|length }}</span></h2>
+    {% for t in done_today %}
+      <div class="task done">
+        <form method="post" action="/tasks/{{ t.id }}/undo" class="inline"><button class="check-btn checked" title="Вернуть"></button></form>
+        <span class="task-title">{{ t.title }}</span>
+      </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,29 @@
+<form method="post" action="/tasks/add" class="quickadd">
+  <input name="text" id="quick" autocomplete="off" required
+         placeholder="Новая задача: «сдать лабу завтра в 15 1ч !1 #учеба», «зарядка каждый день утром»">
+  <button class="primary">Добавить</button>
+  <div id="quick-hint" class="muted small"></div>
+</form>
+<script>
+(() => {
+  const input = document.getElementById('quick'), hint = document.getElementById('quick-hint');
+  if (!input) return;
+  let timer;
+  const pr = {1: 'срочно и важно', 2: 'важно', 3: 'обычный'};
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    if (!input.value.trim()) { hint.textContent = ''; return; }
+    timer = setTimeout(async () => {
+      const r = await fetch('/api/parse?text=' + encodeURIComponent(input.value));
+      if (!r.ok) return;
+      const p = await r.json(), bits = [];
+      if (p.due_date) bits.push('📅 ' + p.due_date.split('-').reverse().slice(0, 2).join('.') + (p.due_time ? ' ' + p.due_time : ''));
+      if (p.duration !== 30) bits.push('⏱ ' + p.duration + ' мин');
+      if (pr[p.priority]) bits.push('❗ ' + pr[p.priority]);
+      if (p.recur) bits.push('🔁 повтор');
+      p.tags.forEach(t => bits.push('#' + t));
+      hint.textContent = bits.length ? '«' + p.title + '» · ' + bits.join(' · ') : '';
+    }, 250);
+  });
+})();
+</script>

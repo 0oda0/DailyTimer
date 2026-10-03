@@ -92,9 +92,13 @@
     <form method="post" class="settings card">
       <h2>Telegram-бот для уведомлений</h2>
       <p class="muted">Создай бота у <a href="https://t.me/BotFather" target="_blank">@BotFather</a> (команда /newbot), вставь токен
-        и напиши своему боту /start. Утром придёт план, а днём — срочные письма.</p>
+        и напиши своему боту /start. Бот станет твоим ассистентом в Telegram: ему можно писать задачи и вопросы,
+        утром он пришлёт план, днём — напоминания и срочные письма, вечером — итоги дня.</p>
       <label>Токен бота <input name="telegram_bot_token" type="password" value="{{ s.telegram_bot_token }}" placeholder="123456:ABC..."></label>
+      {{ check("telegram_chat_bot", "Чат с ИИ-ассистентом прямо в боте (задачи, вопросы, «что сегодня»)") }}
       {{ check("telegram_notify_mail", "Присылать важные письма и письма, которые ждут ответа") }}
+      {{ check("remind_lessons", "Напоминать о парах за 15 минут") }}
+      {{ check("remind_tasks", "Напоминать о задачах со временем") }}
       <button class="primary">Сохранить</button>
       {% if s.telegram_bot_token %}<button formaction="/telegram/test">Отправить тестовое сообщение</button>{% endif %}
     </form>
@@ -168,7 +172,11 @@
       <label>Подъём <input name="wake_time" type="time" value="{{ s.wake_time }}"></label>
       <label>Отбой <input name="sleep_time" type="time" value="{{ s.sleep_time }}"></label>
       <label>Когда составлять план <input name="plan_time" type="time" value="{{ s.plan_time }}"></label>
+      <label>Вечерние итоги дня в Telegram <input name="evening_time" type="time" value="{{ s.evening_time }}"></label>
       <label>Обновлять почту, GitHub и Telegram каждые N минут <input name="sync_interval_minutes" type="number" min="5" value="{{ s.sync_interval_minutes }}"></label>
+      <h2>Календарь на телефоне</h2>
+      <p class="muted small">Пары и задачи можно видеть в стандартном календаре iPhone/Android/Google: подпишись на ссылку
+        (в календаре: «Добавить календарь по URL»). <a href="/calendar/link" target="_blank">Получить ссылку</a></p>
       <h2>Без ключей</h2>
       <label>Город для погоды <input name="weather_city" value="{{ s.weather_city }}" placeholder="Москва"></label>
       <label>Другие календари — «Название | секретная ICS-ссылка» (Google, Яндекс, Outlook, Apple)

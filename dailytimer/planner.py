@@ -13,8 +13,8 @@ log = logging.getLogger(__name__)
 _SYSTEM = """Ты — личный ассистент-планировщик студента, который учится и программирует.
 По данным из его сервисов составь реалистичный план на сегодня на русском языке в Markdown:
 1. «## Главное сегодня» — 3 самых важных пункта.
-2. «## Расписание» — блоки по времени от подъёма до сна: пары (фиксированы), дорога,
-   глубокая работа, ревью PR, разбор почты, еда, отдых. Не ставь задачи поверх пар.
+2. «## Расписание» — блоки по времени от подъёма до сна: пары (фиксированы), задачи со временем (фиксированы),
+   дорога, остальные задачи по приоритету, привычки, ревью PR, разбор почты, еда, отдых. Не ставь задачи поверх пар.
 3. «## Почта и сообщения» — на какие письма и Telegram-чаты ответить (и что примерно ответить), что важно.
 4. «## Деньги и подписки» — что скоро спишется и стоит ли отменить.
 Будь конкретным (названия репозиториев, тем писем, предметов), не выдумывай фактов."""
@@ -66,6 +66,18 @@ def build_context(data: dict[str, Any], settings: dict[str, Any], today: date) -
             amount = f"{s['amount']} {s['currency']}" if s.get("amount") else "сумма неизвестна"
             lines.append(f"- {s['name']}: {amount}, через {s['days_left']} дн. ({s['next_charge']})")
 
+    tasks = data.get("tasks") or {}
+    for key, title in (("overdue", "Просроченные задачи"), ("today", "Задачи на сегодня"),
+                       ("upcoming", "Задачи на неделю"), ("inbox", "Задачи без срока")):
+        if tasks.get(key):
+            lines.append(f"\n{title}:")
+            lines += [f"- {t['title']}" + (f" в {t['due_time']}" if t.get("due_time") else "")
+                      + (f" ({t['due_date']})" if key == "upcoming" else "")
+                      + f", ~{t['duration']} мин, приоритет {t['priority']}" for t in tasks[key][:12]]
+    habits = [h for h in data.get("habits") or [] if not h.get("done_today")]
+    if habits:
+        lines.append("\nПривычки на сегодня: " + ", ".join(h["name"] for h in habits))
+
     tg = data.get("telegram") or {}
     waiting = [c for c in tg.get("chats", []) if c.get("waiting")]
     mentioned = [c for c in tg.get("chats", []) if c.get("mentions") and not c.get("waiting")]
@@ -109,11 +121,20 @@ def rule_based_plan(data: dict[str, Any], settings: dict[str, Any], today: date)
     if weather.get("days"):
         d = weather["days"][0]
         top.append(f"Погода: {d['text']}, {d['min']}…{d['max']}°C" + (" — возьми зонт" if d["rain"] >= 50 else ""))
+    tasks = data.get("tasks") or {}
+    todo = (tasks.get("overdue") or []) + (tasks.get("today") or [])
+    if todo:
+        top.append(f"Задач на сегодня: {len(todo)}" + (f", просрочено {len(tasks.get('overdue') or [])}" if tasks.get("overdue") else ""))
     out += [f"- {t}" for t in top] or ["- Свободный день — займись своими проектами"]
 
     out += ["", "## Расписание", f"- {settings.get('wake_time')} подъём"]
     out += [f"- {l['start'][11:16]}–{l['end'][11:16]} {l['title']}" for l in lessons]
     out.append(f"- {settings.get('sleep_time')} отбой")
+    if todo:
+        out += ["", "## Задачи"] + [
+            f"- {'**' if t['priority'] <= 2 else ''}{t['title']}{'**' if t['priority'] <= 2 else ''}"
+            + (f" в {t['due_time']}" if t.get("due_time") else "") for t in sorted(todo, key=lambda t: t["priority"])[:10]
+        ]
 
     if gh.get("review_requests") or gh.get("assigned"):
         out += ["", "## GitHub"]

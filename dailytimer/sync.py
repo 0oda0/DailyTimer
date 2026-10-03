@@ -274,7 +274,14 @@ def collect(storage: Storage) -> dict[str, Any]:
 def build_plan(storage: Storage, send: bool = False) -> dict[str, Any]:
     settings = storage.get_settings()
     today = today_for(settings)
-    content, engine = planner.make_plan(collect(storage), settings, today)
+    from .life import Habits
+    from .tasks import Tasks
+
+    data = collect(storage)
+    views = Tasks(storage).views(today)
+    data["tasks"] = {k: views[k] for k in ("overdue", "today", "upcoming", "inbox")}
+    data["habits"] = Habits(storage).overview(today)
+    content, engine = planner.make_plan(data, settings, today)
     storage.save_plan(today.isoformat(), content, engine)
     if send:
         notify(storage, settings, content)
