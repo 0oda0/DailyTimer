@@ -20,7 +20,9 @@ SECTIONS: dict[str, dict[str, Any]] = {
     "social": {
         "icon": "💬", "title": "Соцсети и мессенджеры",
         "about": "Telegram: чаты, которые ждут ответа; уведомления от бота",
-        "fields": ["telegram_bot_token", "telegram_notify_mail", "telegram_chat_bot", "remind_lessons", "remind_tasks"],
+        "fields": ["telegram_bot_token", "telegram_notify_mail", "telegram_chat_bot", "remind_lessons", "remind_tasks",
+                   "notify_schedule", "notify_github", "notify_money", "notify_receipts", "notify_errors",
+                   "notify_app_updates"],
     },
     "dev": {
         "icon": "🐙", "title": "Разработка",

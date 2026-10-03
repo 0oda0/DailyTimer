@@ -99,6 +99,13 @@
       {{ check("telegram_notify_mail", "Присылать важные письма и письма, которые ждут ответа") }}
       {{ check("remind_lessons", "Напоминать о парах за 15 минут") }}
       {{ check("remind_tasks", "Напоминать о задачах со временем") }}
+      <h3>Уведомления об изменениях</h3>
+      {{ check("notify_schedule", "Изменения в расписании: перенос, отмена, новая пара, смена аудитории") }}
+      {{ check("notify_github", "GitHub: новые запросы на ревью и назначенные задачи") }}
+      {{ check("notify_money", "Подписки: напомнить за 3 дня до списания") }}
+      {{ check("notify_receipts", "Каждый новый чек из почты") }}
+      {{ check("notify_errors", "Если сервис перестал обновляться (например, сменился пароль) и когда снова заработал") }}
+      {{ check("notify_app_updates", "Обновления DailyTimer — что нового") }}
       <button class="primary">Сохранить</button>
       {% if s.telegram_bot_token %}<button formaction="/telegram/test">Отправить тестовое сообщение</button>{% endif %}
     </form>

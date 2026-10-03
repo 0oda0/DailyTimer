@@ -21,7 +21,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import bot, sync
+from .. import bot, notifications, sync
 from ..ai import LOCAL_MODELS, AIClient
 from ..connectors import tg_account
 from ..life import Focus, Habits
@@ -121,6 +121,8 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
             reschedule()
             scheduler.start()
             poller.start()
+            in_background(lambda: notifications.announce_version(
+                storage, lambda text: sync.notify(storage, storage.get_settings(), text)))
             ai = AIClient.from_settings(storage.get_settings())
             if ai and ai.local:  # скачать локальную модель заранее, в фоне
                 threading.Thread(target=ai.local.ensure_model, daemon=True).start()

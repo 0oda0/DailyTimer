@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
-from . import planner, sorter
+from . import notifications, planner, sorter
 from .ai import AIClient, AIError
 from .connectors import feeds, github, gmail, mtuci, portal, schedule, subscriptions, telegram, tg_account
 from .storage import Storage
@@ -31,20 +31,23 @@ def is_stale(storage: Storage, source: str, hours: float) -> bool:
     return datetime.now(timezone.utc) - updated > timedelta(hours=hours)
 
 
-def notify(storage: Storage, settings: dict[str, Any], text: str) -> None:
+def notify(storage: Storage, settings: dict[str, Any], text: str) -> bool:
+    """Отправляет сообщение владельцу в Telegram. True — если ушло."""
     token, chat_id = settings.get("telegram_bot_token"), settings.get("telegram_chat_id")
     if not token:
-        return
+        return False
     try:
         if not chat_id:
             chat_id = telegram.discover_chat_id(token)
             if not chat_id:
-                return
+                return False
             storage.save_settings({"telegram_chat_id": chat_id})
             settings["telegram_chat_id"] = chat_id
         telegram.send(token, chat_id, text)
+        return True
     except telegram.TelegramError as exc:
         log.warning("Telegram: %s", exc)
+        return False
 
 
 # ------------------------------------------------------------------ почта
@@ -202,6 +205,7 @@ def sync_all(storage: Storage, force: bool = False) -> dict[str, str | None]:
         today = today_for(settings)
         ai = AIClient.from_settings(settings)
         errors: dict[str, str | None] = {}
+        before = {source: storage.get_snapshot(source) for source in SOURCES}
 
         def run(source: str, fn: Callable[[], Any]) -> Any:
             try:
@@ -262,6 +266,12 @@ def sync_all(storage: Storage, force: bool = False) -> dict[str, str | None]:
             run("feeds", lambda: storage.save_snapshot("feeds", {"feeds": feeds.feeds(rss)}))
         if settings.get("codeforces") and (force or is_stale(storage, "codeforces", 6)):
             run("codeforces", lambda: storage.save_snapshot("codeforces", {"contests": feeds.codeforces_contests()}))
+        try:
+            if settings.get("telegram_bot_token"):
+                notifications.after_sync(storage, settings, before, errors, today,
+                                         lambda text: notify(storage, settings, text))
+        except Exception:
+            log.exception("Ошибка при подготовке уведомлений")
         return errors
     finally:
         _sync_lock.release()

@@ -47,6 +47,13 @@ for _ in 1 2 3 4 5; do
   docker compose exec -T ollama ollama pull "$OLLAMA_MODEL" && break || sleep 5
 done
 
+# Ночное автообновление (выключить: AUTO_UPDATE=0 bash install.sh)
+if [ "${AUTO_UPDATE:-1}" = "1" ] && command -v crontab >/dev/null 2>&1; then
+  ( crontab -l 2>/dev/null | grep -v "DailyTimer-autoupdate" || true
+    echo "30 4 * * * cd $(pwd) && bash update.sh >> data/update.log 2>&1 # DailyTimer-autoupdate" ) | crontab -
+  echo "==> Автообновление включено: каждую ночь в 04:30"
+fi
+
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
   ufw allow "$DAILYTIMER_PORT"/tcp >/dev/null
 fi

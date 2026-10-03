@@ -74,6 +74,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "remind_lessons": True,
     "remind_tasks": True,
     "telegram_chat_bot": True,
+    # Уведомления об изменениях
+    "notify_schedule": True,
+    "notify_github": True,
+    "notify_money": True,
+    "notify_receipts": False,
+    "notify_errors": True,
+    "notify_app_updates": True,
 }
 
 
