@@ -46,8 +46,9 @@
   <section class="card wide">
     <div class="actions">
       <h2>🧭 Итоги недели от ИИ</h2>
-      <form method="post" action="/review/ai"><button class="primary">Подвести итоги</button></form>
+      <form method="post" action="/review/ai"><button class="primary" {% if review_pending %}disabled{% endif %}>{{ 'ИИ думает…' if review_pending else 'Подвести итоги' }}</button></form>
     </div>
+    {% if review_pending %}<meta http-equiv="refresh" content="10">{% endif %}
     {% if review_html %}<div class="plan">{{ review_html|safe }}</div><p class="muted small">{{ review_at|replace('T', ' ') }}</p>
     {% else %}<p class="muted">ИИ проанализирует выполненные задачи, фокус и дневник и предложит 3 фокуса на следующую неделю.</p>{% endif %}
   </section>

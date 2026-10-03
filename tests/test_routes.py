@@ -60,3 +60,28 @@ def test_sync_button_works(tmp_path, monkeypatch):
     client = TestClient(create_app(Storage(tmp_path), start_scheduler=False))
     resp = client.post("/sync", follow_redirects=False)
     assert resp.status_code == 303 and resp.headers["location"].startswith("/")
+
+
+def test_blocking_work_runs_outside_event_loop(tmp_path, monkeypatch):
+    """Telegram-вход, чат и действия на сервере не должны выполняться в цикле событий сервера:
+    там asyncio.run() падает, а долгий ответ ИИ замораживает весь сайт."""
+    import asyncio
+
+    from dailytimer.connectors import tg_account, vps
+
+    def needs_own_loop(*args, **kwargs):
+        asyncio.run(asyncio.sleep(0))  # упадёт, если нас вызвали внутри работающего цикла
+        return ("session", "hash")
+
+    monkeypatch.setattr(tg_account, "send_code", needs_own_loop)
+    monkeypatch.setattr("dailytimer.assistant.Assistant.reply", lambda self, text, ch: needs_own_loop() and "ok")
+    monkeypatch.setattr(vps.Agent, "update", lambda self, path: needs_own_loop() and "job1")
+    monkeypatch.delenv("DAILYTIMER_PASSWORD", raising=False)
+    store = Storage(tmp_path)
+    store.save_settings({"server_agent_token": "t"})
+    client = TestClient(create_app(store, start_scheduler=False), raise_server_exceptions=True)
+    resp = client.post("/telegram/account/code", data={"tg_api_id": "1", "tg_api_hash": "h", "tg_phone": "+7"},
+                       follow_redirects=False)
+    assert resp.status_code == 303 and "error" not in resp.headers["location"]
+    assert client.post("/api/chat", json={"text": "привет"}).json()["reply"] == "ok"
+    assert client.post("/api/server/update", json={"path": "/x"}).json() == {"job": "job1"}

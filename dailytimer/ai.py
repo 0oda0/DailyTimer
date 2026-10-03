@@ -64,7 +64,9 @@ class OllamaBackend(Backend):
 
     def ensure_model(self) -> bool:
         """Скачивает модель, если её ещё нет. Вызывается в фоне при старте."""
-        with self._pull_lock:
+        if not self._pull_lock.acquire(blocking=False):
+            return False  # уже качается в другом потоке — не дублируем
+        try:
             if self.available():
                 return True
             try:
@@ -77,6 +79,8 @@ class OllamaBackend(Backend):
                 log.warning("Не удалось скачать модель %s: %s", self.model, exc)
                 return False
             return self.available()
+        finally:
+            self._pull_lock.release()
 
     def chat(self, system: str, user: str, temperature: float, want_json: bool) -> str:
         body: dict[str, Any] = {

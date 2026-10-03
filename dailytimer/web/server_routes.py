@@ -8,6 +8,7 @@ from typing import Any, Callable
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from .. import sync
 from ..connectors import vps
@@ -74,8 +75,8 @@ def register(app: FastAPI, storage: Storage, templates: Jinja2Templates, auth: C
             return JSONResponse({"error": "Агент не настроен"}, status_code=400)
         try:
             if body.get("container"):
-                return {"job": client.restart(str(body["container"]))}
-            return {"job": client.update(str(body.get("path", "")))}
+                return {"job": await run_in_threadpool(client.restart, str(body["container"]))}
+            return {"job": await run_in_threadpool(client.update, str(body.get("path", "")))}
         except vps.AgentError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 

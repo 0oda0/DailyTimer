@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from .. import bot, mail_cleanup, notifications, sync
 from ..ai import LOCAL_MODELS, AIClient
@@ -319,7 +320,7 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
             api_hash = current.get("tg_api_hash", "")
         phone = str(form.get("tg_phone", "")).strip().replace(" ", "")
         try:
-            pending, code_hash = tg_account.send_code(api_id, api_hash, phone)
+            pending, code_hash = await run_in_threadpool(tg_account.send_code, api_id, api_hash, phone)
         except tg_account.TgError as exc:
             return back("social", error=str(exc))
         storage.save_settings({"tg_api_id": api_id, "tg_api_hash": api_hash, "tg_phone": phone,
@@ -334,7 +335,8 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         if not pending:
             return back("social", error="Сначала запроси код")
         try:
-            session, name = tg_account.sign_in(
+            session, name = await run_in_threadpool(
+                tg_account.sign_in,
                 current["tg_api_id"], current["tg_api_hash"], pending, current["tg_phone"],
                 str(form.get("code", "")), code_hash, str(form.get("password", "")),
             )

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import threading
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from .. import sync
 from ..ai import AIClient, AIError
@@ -126,7 +128,8 @@ def register(app: FastAPI, storage: Storage, templates: Jinja2Templates, auth: C
     async def api_chat(request: Request) -> Any:
         body = await request.json()
         text = str(body.get("text", ""))[:4000]
-        answer = assistant.reply(text, "web")
+        # Ответ ИИ может занять минуты — считаем в отдельном потоке, чтобы сайт не замирал.
+        answer = await run_in_threadpool(assistant.reply, text, "web")
         return JSONResponse({"reply": answer, "html": render_markdown(answer)})
 
     @app.post("/chat/clear", dependencies=guard)
@@ -186,6 +189,7 @@ def register(app: FastAPI, storage: Storage, templates: Jinja2Templates, auth: C
             "day": current, "entry": journal.get(current), "moods": MOODS, "stats": week_stats(storage, current),
             "done": tasks.done_between(current - timedelta(days=6), current), "recent": journal.recent(),
             "review_html": render_markdown(review.get("text", "")), "review_at": review.get("at"),
+            "review_pending": bool(review.get("pending")),
             "left_today": tasks.views(current)["today"] + tasks.views(current)["overdue"],
         })
 
@@ -208,8 +212,24 @@ def register(app: FastAPI, storage: Storage, templates: Jinja2Templates, auth: C
                 tasks.update(task["id"], due_date=(day + timedelta(days=1)).isoformat(), scheduled_start=None)
         return RedirectResponse(f"/review?day={day.isoformat()}&saved=1", status_code=303)
 
+    review_lock = threading.Lock()
+
     @app.post("/review/ai", dependencies=guard)
     def review_ai() -> Any:
+        def work() -> None:
+            if not review_lock.acquire(blocking=False):
+                return
+            try:
+                _weekly_review()
+            finally:
+                review_lock.release()
+
+        storage.save_snapshot("weekly_review", {**(storage.get_snapshot("weekly_review")["data"] or {}),
+                                                "pending": True})
+        threading.Thread(target=work, daemon=True).start()
+        return RedirectResponse("/review", status_code=303)
+
+    def _weekly_review() -> None:
         day = today()
         ai = AIClient.from_settings(storage.get_settings())
         stats = week_stats(storage, day)
@@ -231,7 +251,6 @@ def register(app: FastAPI, storage: Storage, templates: Jinja2Templates, auth: C
             except AIError as exc:
                 text = f"ИИ недоступен: {exc}"
         storage.save_snapshot("weekly_review", {"text": text, "at": datetime.now().isoformat(timespec="minutes")})
-        return RedirectResponse("/review", status_code=303)
 
     # ------------------------------------------------------------ календарь для телефона
 
