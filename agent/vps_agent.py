@@ -387,7 +387,18 @@ def start_update(path: str) -> str:
     if method == "update.sh":
         steps = [(["bash", "update.sh"], path, 1800)]
     else:
-        steps = [(["git", *safe, "pull", "--ff-only"], path, 300)]
+        # Не полагаемся на настроенное отслеживание ветки (git pull без него не работает):
+        # явно забираем origin и переводим текущую ветку вперёд до origin/<ветка>.
+        code, branch = run(["git", *safe, "rev-parse", "--abbrev-ref", "HEAD"], cwd=path)
+        if code != 0 or branch in ("", "HEAD"):
+            raise ValueError("В проекте не выбрана ветка (detached HEAD) — обнови его вручную")
+        code, _ = run(["git", *safe, "remote", "get-url", "origin"], cwd=path)
+        if code != 0:
+            raise ValueError("У проекта нет удалённого репозитория origin — обновлять неоткуда")
+        steps = [
+            (["git", *safe, "fetch", "origin", branch], path, 300),
+            (["git", *safe, "merge", "--ff-only", f"origin/{branch}"], path, 120),
+        ]
         if method.endswith("docker compose"):
             steps.append((["docker", "compose", "up", "-d", "--build", "--remove-orphans"], path, 1800))
     return _job(f"Обновление {os.path.basename(path)}", steps)

@@ -85,3 +85,17 @@ def test_blocking_work_runs_outside_event_loop(tmp_path, monkeypatch):
     assert resp.status_code == 303 and "error" not in resp.headers["location"]
     assert client.post("/api/chat", json={"text": "привет"}).json()["reply"] == "ok"
     assert client.post("/api/server/update", json={"path": "/x"}).json() == {"job": "job1"}
+
+
+def test_ai_page_warns_when_model_too_big(tmp_path, monkeypatch):
+    import dailytimer.web.app as web_app
+
+    monkeypatch.delenv("DAILYTIMER_PASSWORD", raising=False)
+    monkeypatch.setattr(web_app, "server_ram_gb", lambda: 2.9)
+    store = Storage(tmp_path)
+    store.save_settings({"ai_local_model": "qwen2.5:3b"})
+    page = TestClient(create_app(store, start_scheduler=False)).get("/settings/ai").text
+    assert "2.9 ГБ памяти" in page and "qwen2.5:1.5b</b>" in page
+    store.save_settings({"ai_local_model": "qwen2.5:1.5b"})
+    page = TestClient(create_app(store, start_scheduler=False)).get("/settings/ai").text
+    assert "ГБ памяти, а модели" not in page

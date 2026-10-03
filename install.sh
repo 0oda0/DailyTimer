@@ -72,6 +72,14 @@ if [ "$model_ok" != 1 ]; then
   echo "   DailyTimer сам попробует скачать её снова позже."
 fi
 
+case "$OLLAMA_MODEL" in
+  qwen2.5:3b) need=4 ;; gemma3:4b) need=7 ;; qwen2.5:7b) need=12 ;; *) need=0 ;;
+esac
+if [ "$need" -gt 0 ] && [ "${mem_gb:-0}" -lt "$need" ]; then
+  echo "!! На сервере ${mem_gb} ГБ памяти, а модели $OLLAMA_MODEL нужно ~${need} ГБ — сайт может падать."
+  echo "   Выбери модель полегче: панель → Подключения → ИИ → qwen2.5:1.5b (или OLLAMA_MODEL в .env)."
+fi
+
 # Ночное автообновление (выключить: AUTO_UPDATE=0 bash install.sh)
 if [ "${AUTO_UPDATE:-1}" = "1" ] && command -v crontab >/dev/null 2>&1; then
   ( crontab -l 2>/dev/null | grep -v "DailyTimer-autoupdate" || true

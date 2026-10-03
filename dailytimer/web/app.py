@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
 from .. import bot, mail_cleanup, notifications, sync
-from ..ai import LOCAL_MODELS, AIClient
+from ..ai import DEFAULT_LOCAL_MODEL, LOCAL_MODELS, MODEL_MIN_RAM, AIClient, recommended_model, server_ram_gb
 from ..connectors import tg_account
 from ..life import Focus, Habits
 from ..tasks import Tasks, timeline
@@ -245,6 +245,9 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
              "cleanup": storage.get_snapshot("mail_cleanup")["data"] or {}, "cleanup_kinds": mail_cleanup.KINDS,
              "cleanup_selected": mail_cleanup.selected_kinds(storage.get_settings()),
              "cleanup_running": mail_cleanup.running(),
+             "ram_gb": round(server_ram_gb(), 1), "recommended_model": recommended_model(server_ram_gb()),
+             "current_model": storage.get_settings().get("ai_local_model") or DEFAULT_LOCAL_MODEL,
+             "model_ram": MODEL_MIN_RAM,
              "models": LOCAL_MODELS, "saved": saved, "error": error, "info": info,
              "section": section, "sections": SECTIONS, "snaps": snaps,
              "status": section_status(section, storage.get_settings(), snaps)},

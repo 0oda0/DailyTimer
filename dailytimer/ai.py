@@ -43,6 +43,27 @@ HF_MIRRORS = {
 }
 
 
+# Сколько оперативной памяти сервера (ГБ) нужно модели вместе с самим DailyTimer.
+MODEL_MIN_RAM = {"qwen2.5:1.5b": 2, "qwen2.5:3b": 4, "gemma3:4b": 7, "qwen2.5:7b": 12}
+
+
+def server_ram_gb() -> float:
+    """Память хоста (в контейнере /proc/meminfo показывает память всего сервера)."""
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / 1024 / 1024
+    except OSError:
+        pass
+    return 0.0
+
+
+def recommended_model(ram_gb: float) -> str:
+    fitting = [m for m, need in sorted(MODEL_MIN_RAM.items(), key=lambda kv: kv[1]) if ram_gb + 0.5 >= need]
+    return fitting[-1] if fitting else "qwen2.5:1.5b"
+
+
 class AIError(RuntimeError):
     pass
 

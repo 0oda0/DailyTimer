@@ -111,6 +111,22 @@ def test_agent_http_and_update_via_dailytimer(projects, agent_server, tmp_path, 
     assert vps_agent.project_info(str(projects))["behind"] == 0
 
 
+def test_update_without_upstream_tracking(projects, agent_server):
+    """Ветка без настроенного отслеживания (как /opt/hsklearn): git pull падал, теперь обновляется."""
+    git("branch", "--unset-upstream", cwd=projects)
+    plain = subprocess.run(["git", "pull", "--ff-only"], cwd=projects, capture_output=True, text=True)
+    assert plain.returncode != 0 and "no tracking information" in plain.stderr  # воспроизведение
+    client = vps.Agent(agent_server, "secret-token")
+    job_id = client.update(str(projects))
+    for _ in range(100):
+        job = client.job(job_id)
+        if job["status"] != "running":
+            break
+        time.sleep(0.1)
+    assert job["status"] == "ok", job["log"]
+    assert (projects / "README").read_text() == "v2"
+
+
 def test_server_notifications():
     old = {"ports": [{"proto": "tcp", "port": 22, "public": True, "process": "sshd"}],
            "containers": [{"name": "db", "state": "running", "status": "Up"}]}

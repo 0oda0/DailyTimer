@@ -185,6 +185,11 @@
     </form>
 
 {% elif section == "ai" %}
+    {% if ram_gb and model_ram.get(current_model, 0) > ram_gb + 0.5 %}
+      <div class="card notice err">⚠️ На сервере {{ ram_gb }} ГБ памяти, а модели {{ current_model }} нужно около {{ model_ram[current_model] }} ГБ.
+        Из-за нехватки памяти сервер может убивать процессы, и сайт будет падать.
+        Выбери ниже <b>{{ recommended_model }}</b> и сохрани — она скачается сама.</div>
+    {% endif %}
     <form method="post" class="settings card">
       <h2>ИИ без ключей</h2>
       <p class="muted">Модель работает прямо на твоём сервере (Ollama) — бесплатно, без ключей и лимитов, почта никуда не уходит.
