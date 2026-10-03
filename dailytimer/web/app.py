@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .. import sync
-from ..ai import PROVIDERS
+from ..ai import LOCAL_MODELS, AIClient
 from ..sorter import CATEGORIES
 from ..storage import DEFAULT_SETTINGS, SECRET_FIELDS, Storage
 
@@ -93,8 +94,8 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         )
 
         def morning() -> None:
-            sync.sync_all(storage)
-            sync.build_plan(storage)
+            sync.sync_all(storage, force=True)
+            sync.build_plan(storage, send=True)
 
         scheduler.add_job(
             morning, CronTrigger(hour=hour, minute=minute, timezone=tz), id="plan", replace_existing=True
@@ -105,10 +106,29 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         def _start() -> None:
             reschedule()
             scheduler.start()
+            ai = AIClient.from_settings(storage.get_settings())
+            if ai and ai.local:  # скачать локальную модель заранее, в фоне
+                threading.Thread(target=ai.local.ensure_model, daemon=True).start()
 
         @app.on_event("shutdown")
         def _stop() -> None:
             scheduler.shutdown(wait=False)
+
+    plan_lock = threading.Lock()
+
+    def in_background(fn: Any, lock: threading.Lock | None = None) -> None:
+        def runner() -> None:
+            if lock and not lock.acquire(blocking=False):
+                return
+            try:
+                fn()
+            except Exception:
+                log.exception("Фоновая задача упала")
+            finally:
+                if lock:
+                    lock.release()
+
+        threading.Thread(target=runner, daemon=True).start()
 
     @app.get("/", response_class=HTMLResponse, dependencies=[Depends(auth)])
     def dashboard(request: Request) -> Any:
@@ -117,10 +137,16 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         snaps = {s: storage.get_snapshot(s) for s in sync.SOURCES}
         plan = storage.get_plan(today.isoformat())
         lessons = (snaps["schedule"]["data"] or {}).get("lessons", [])
-        mails = (snaps["gmail"]["data"] or {}).get("messages", [])
+        gmail_data = snaps["gmail"]["data"] or {}
+        mails = gmail_data.get("messages", [])
         by_cat: dict[str, list] = {}
         for mail in mails:
             by_cat.setdefault(mail.get("category", "other"), []).append(mail)
+        subs_data = snaps["subscriptions"]["data"] or {}
+        totals: dict[str, float] = {}
+        for receipt in subs_data.get("receipts", []):
+            if receipt.get("amount"):
+                totals[receipt["currency"]] = totals.get(receipt["currency"], 0) + receipt["amount"]
         return templates.TemplateResponse(
             request,
             "dashboard.html",
@@ -129,10 +155,21 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
                 "snaps": snaps,
                 "plan": plan,
                 "plan_html": render_markdown(plan["content"]) if plan else "",
+                "busy": sync._sync_lock.locked() or plan_lock.locked() or "busy" in request.query_params,
                 "today_lessons": [l for l in lessons if l["start"].startswith(today.isoformat())],
                 "upcoming_lessons": [l for l in lessons if l["start"][:10] > today.isoformat()][:12],
+                "replies": [m for m in mails if m.get("needs_reply")],
+                "important": [m for m in mails if m.get("important") and not m.get("needs_reply")],
+                "rescued": gmail_data.get("rescued", []),
+                "digest": gmail_data.get("digest", ""),
+                "cleaned": sum(1 for m in mails if m.get("actions")),
                 "mail_groups": [(k, CATEGORIES[k]["title"], by_cat[k]) for k in CATEGORIES if k in by_cat],
-                "configured": any(settings.get(k) for k in ("github_token", "gmail_email", "schedule_ics_url", "schedule_manual")),
+                "receipts": subs_data.get("receipts", []),
+                "receipt_totals": totals,
+                "configured": any(
+                    settings.get(k)
+                    for k in ("github_token", "gmail_email", "schedule_ics_url", "schedule_manual", "schedule_login")
+                ),
             },
         )
 
@@ -141,7 +178,7 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         settings = storage.get_settings()
         masked = {k: ("••••••••" if k in SECRET_FIELDS and v else v) for k, v in settings.items()}
         return templates.TemplateResponse(
-            request, "settings.html", {"s": masked, "providers": PROVIDERS, "saved": saved}
+            request, "settings.html", {"s": masked, "models": LOCAL_MODELS, "saved": saved}
         )
 
     @app.post("/settings", dependencies=[Depends(auth)])
@@ -157,21 +194,38 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
             value = str(form[key]).strip()
             if key in SECRET_FIELDS and value == "••••••••":
                 continue  # секрет не меняли
-            updates[key] = int(value or DEFAULT_SETTINGS[key]) if key in INT_FIELDS else value
+            if key in INT_FIELDS:
+                try:
+                    updates[key] = int(value)
+                except ValueError:
+                    updates[key] = DEFAULT_SETTINGS[key]
+            else:
+                updates[key] = value
+        if "telegram_bot_token" in updates:
+            updates["telegram_chat_id"] = ""  # новый бот — chat_id найдём заново по /start
         storage.save_settings(updates)
         if start_scheduler:
             reschedule()
+            in_background(lambda: sync.sync_all(storage, force=True))
+            ai = AIClient.from_settings(storage.get_settings())
+            if ai and ai.local:
+                in_background(ai.local.ensure_model)
         return RedirectResponse("/settings?saved=1", status_code=303)
 
     @app.post("/sync", dependencies=[Depends(auth)])
     def run_sync() -> Any:
-        sync.sync_all(storage)
-        return RedirectResponse("/", status_code=303)
+        in_background(lambda: sync.sync_all(storage, force=True))
+        return RedirectResponse("/?busy=1", status_code=303)
+
+    @app.post("/telegram/test", dependencies=[Depends(auth)])
+    def telegram_test() -> Any:
+        sync.notify(storage, storage.get_settings(), "DailyTimer подключён ✅ Сюда будут приходить план дня и срочные письма.")
+        return RedirectResponse("/settings?saved=1", status_code=303)
 
     @app.post("/plan", dependencies=[Depends(auth)])
     def run_plan() -> Any:
-        sync.build_plan(storage)
-        return RedirectResponse("/", status_code=303)
+        in_background(lambda: sync.build_plan(storage), plan_lock)
+        return RedirectResponse("/?busy=1", status_code=303)
 
     @app.get("/api/state", dependencies=[Depends(auth)])
     def api_state() -> Any:

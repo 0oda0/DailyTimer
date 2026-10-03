@@ -4,8 +4,8 @@ from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
 
 from dailytimer import planner, sorter
-from dailytimer.ai import extract_json
-from dailytimer.connectors import gmail, schedule, subscriptions
+from dailytimer.ai import AIClient, AIError, Backend, extract_json
+from dailytimer.connectors import feeds, gmail, portal, schedule, subscriptions
 from dailytimer.storage import Storage
 from dailytimer.web.app import create_app, render_markdown
 
@@ -56,11 +56,107 @@ END:VCALENDAR"""
     ]
 
 
-def test_rules_classification():
-    assert sorter.classify_by_rules({"from": "GitHub <notifications@github.com>", "subject": "PR"}) == "dev"
-    assert sorter.classify_by_rules({"from": "shop@x.ru", "subject": "Скидка 50% на всё"}) == "promo"
-    result = sorter.classify([{"uid": "1", "from": "friend@gmail.com", "subject": "привет"}], ai=None)
-    assert result == {"1": "other"}
+def test_rules_analysis():
+    assert sorter.rule_analysis({"from": "GitHub <notifications@github.com>", "subject": "PR"})["category"] == "dev"
+    promo = sorter.rule_analysis({"from": "shop@x.ru", "subject": "Скидка 50% на всё", "list_unsubscribe": True})
+    assert promo["category"] == "promo" and not promo["important"]
+    receipt = sorter.rule_analysis({"from": "noreply@ofd.ru", "subject": "Кассовый чек", "snippet": "Итого 450 ₽"})
+    assert receipt["category"] == "receipts"
+    ask = sorter.rule_analysis({"from": "Иван <ivan@gmail.com>", "subject": "Встреча",
+                                "snippet": "Привет! Сможешь завтра в 15:00 созвониться?"})
+    assert ask["needs_reply"] and ask["important"] and ask["category"] == "important"
+    assert sorter.analyze([{"uid": "1", "from": "friend@gmail.com", "subject": "привет"}], ai=None)["1"]["category"] == "personal"
+
+
+class FakeAI:
+    name = "fake"
+
+    def __init__(self, answer):
+        self.answer = answer
+
+    def chat_json(self, system, user):
+        return self.answer
+
+
+def test_ai_analysis_overrides_rules_but_keeps_receipts():
+    mails = [
+        {"uid": "1", "from": "prof@uni.ru", "subject": "Курсовая", "snippet": "Пришлите работу"},
+        {"uid": "2", "from": "noreply@ofd.ru", "subject": "Кассовый чек", "snippet": "450 ₽"},
+    ]
+    ai = FakeAI({"1": {"c": "study", "imp": 1, "reply": 1, "sum": "Нужно сдать курсовую"},
+                 "2": {"c": "promo", "imp": 0, "reply": 0, "sum": "чек"}})
+    result = sorter.analyze(mails, ai)
+    assert result["1"] == {"category": "study", "important": True, "needs_reply": True,
+                           "summary": "Нужно сдать курсовую", "by": "fake"}
+    assert result["2"]["category"] == "receipts" and not result["2"]["needs_reply"]
+
+
+def test_spam_rescue_rules():
+    scam = {"category": "personal", "important": False, "needs_reply": False, "by": "rules"}
+    assert not sorter.should_rescue_from_spam({}, scam)
+    assert sorter.should_rescue_from_spam({}, {**scam, "category": "study"})
+    assert sorter.should_rescue_from_spam({}, {**scam, "by": "fake", "important": True})
+    assert not sorter.should_rescue_from_spam({}, {**scam, "by": "fake", "category": "promo", "important": True})
+
+
+def test_portal_heuristic_parse():
+    text = """Расписание на неделю
+Понедельник, 05.10.2026
+1 пара 09:00-10:30 Математический анализ (лекция) ауд. 301
+10:40 – 12:10
+Программирование
+Вторник 06.10
+13:00-14:30 Физика"""
+    lessons = portal.heuristic_parse(text, MONDAY)
+    assert [(l["start"], l["title"]) for l in lessons] == [
+        ("2026-10-05T09:00:00", "Математический анализ (лекция) ауд. 301"),
+        ("2026-10-05T10:40:00", "Программирование"),
+        ("2026-10-06T13:00:00", "Физика"),
+    ]
+
+
+def test_portal_ai_parse():
+    ai = FakeAI({"lessons": [{"date": "2026-10-05", "start": "9.00", "end": "10:30", "title": "Матан",
+                              "location": "301", "teacher": "Иванов"}, {"bad": 1}]})
+    lessons = portal.ai_parse("...", MONDAY, ai)
+    assert lessons == [{"title": "Матан", "start": "2026-10-05T09:00:00", "end": "2026-10-05T10:30:00",
+                        "location": "301 · Иванов", "source": "portal"}]
+
+
+def test_ai_chain_falls_back(monkeypatch):
+    class Broken(Backend):
+        name = "broken"
+
+        def chat(self, *a):
+            raise AIError("down")
+
+    class Works(Backend):
+        name = "works"
+
+        def chat(self, *a):
+            return '{"ok": 1}'
+
+    client = AIClient([Broken(), Works()])
+    assert client.chat_json("s", "u") == {"ok": 1} and client.name == "works"
+    assert AIClient.from_settings({"ai_mode": "off"}) is None
+    names = [b.name for b in AIClient.from_settings({"ai_mode": "auto"}).backends]
+    assert names[0].startswith("local:") and "pollinations" in names[1]
+
+
+def test_rss_parse():
+    rss = b"""<?xml version="1.0"?><rss><channel><item><title>Hello</title><link>https://a</link>
+    <description>&lt;p&gt;Text&lt;/p&gt;</description></item></channel></rss>"""
+    atom = b"""<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>A</title>
+    <link href="https://b"/><updated>2026</updated></entry></feed>"""
+    assert feeds.parse_feed(rss)[0] == {"title": "Hello", "url": "https://a", "date": "", "summary": "Text"}
+    assert feeds.parse_feed(atom)[0]["url"] == "https://b"
+
+
+def test_special_folders():
+    lines = [b'(\\HasNoChildren \\All) "/" "[Gmail]/&BBIEQQRP- &BD8EPgRHBEIEMA-"',
+             b'(\\HasNoChildren \\Junk) "/" "[Gmail]/Spam"', b'(\\HasNoChildren) "/" "INBOX"']
+    folders = gmail._special_folders(lines)
+    assert folders["\\Junk"] == '"[Gmail]/Spam"' and folders["\\All"].startswith('"[Gmail]/&BBI')
 
 
 def test_subscription_detection():

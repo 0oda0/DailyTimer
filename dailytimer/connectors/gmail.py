@@ -1,4 +1,4 @@
-"""Gmail через IMAP: читаем свежие письма, сортируем, вешаем ярлыки DT/*.
+"""Gmail через IMAP: чтение, ярлыки, уборка из «Входящих», спасение писем из «Спама».
 
 Google не пускает сторонние программы по обычному паролю. Нужен «пароль приложения»:
 включи двухэтапную проверку и создай его на https://myaccount.google.com/apppasswords
@@ -10,6 +10,7 @@ from __future__ import annotations
 import email
 import imaplib
 import re
+from datetime import date, timedelta
 from email.header import decode_header, make_header
 from email.message import Message
 from email.utils import parsedate_to_datetime
@@ -17,6 +18,7 @@ from html import unescape
 from typing import Any, Iterator
 
 HOST = "imap.gmail.com"
+imaplib._MAXLINE = 10_000_000  # большие письма с вложениями
 
 
 class GmailError(RuntimeError):
@@ -54,21 +56,38 @@ def _text_of(msg: Message, limit: int = 1500) -> str:
     return re.sub(r"\s+", " ", plain).strip()[:limit]
 
 
-def parse_message(uid: str, raw: bytes, labels: str = "") -> dict[str, Any]:
+def parse_message(uid: str, raw: bytes, labels: str = "", flags: str = "") -> dict[str, Any]:
     msg = email.message_from_bytes(raw)
     try:
-        date = parsedate_to_datetime(msg.get("Date")).isoformat()
+        date_iso = parsedate_to_datetime(msg.get("Date")).isoformat()
     except Exception:
-        date = None
+        date_iso = None
     return {
         "uid": uid,
         "from": _decode(msg.get("From")),
         "subject": _decode(msg.get("Subject")) or "(без темы)",
-        "date": date,
+        "date": date_iso,
         "snippet": _text_of(msg),
         "list_unsubscribe": bool(msg.get("List-Unsubscribe")),
         "gmail_labels": labels,
+        "unread": "\\Seen" not in flags,
+        "in_inbox": "\\Inbox" in labels,
     }
+
+
+def _special_folders(lines: list[bytes]) -> dict[str, str]:
+    """Разбирает ответ LIST и находит папки по special-use флагам (\\All, \\Junk, \\Trash)."""
+    found = {}
+    for raw in lines:
+        line = raw.decode(errors="replace") if isinstance(raw, bytes) else str(raw)
+        match = re.match(r'\((?P<flags>[^)]*)\) "(?P<sep>[^"]*)" (?P<name>.+)$', line)
+        if not match:
+            continue
+        name = match.group("name").strip()
+        for flag in ("\\All", "\\Junk", "\\Trash", "\\Sent"):
+            if flag in match.group("flags").split():
+                found[flag] = name if name.startswith('"') else f'"{name}"'
+    return found
 
 
 class GmailClient:
@@ -83,7 +102,17 @@ class GmailClient:
                 "Gmail не принял логин. Нужен пароль приложения "
                 "(https://myaccount.google.com/apppasswords), а не обычный пароль."
             ) from exc
-        self.imap.select("INBOX")
+        typ, lines = self.imap.list()
+        self.folders = _special_folders(lines or []) if typ == "OK" else {}
+        self.select("all")
+
+    def select(self, which: str) -> None:
+        """which: all | spam | inbox. «Вся почта» — UID там стабильны при архивации."""
+        name = {"all": self.folders.get("\\All"), "spam": self.folders.get("\\Junk")}.get(which) or "INBOX"
+        typ, data = self.imap.select(name)
+        if typ != "OK":
+            raise GmailError(f"Не удалось открыть папку {name}: {data}")
+        self.current = which if name != "INBOX" else "inbox"
 
     def close(self) -> None:
         try:
@@ -99,20 +128,29 @@ class GmailClient:
 
     def search(self, gmail_query: str, limit: int = 60) -> list[str]:
         """Поиск синтаксисом Gmail (X-GM-RAW), например 'newer_than:2d'."""
-        typ, data = self.imap.uid("SEARCH", "X-GM-RAW", f'"{gmail_query}"')
+        # Запрос может быть на русском — передаём его IMAP-литералом в UTF-8.
+        self.imap.literal = gmail_query.encode("utf-8")
+        typ, data = self.imap.uid("SEARCH", "CHARSET", "UTF-8", "X-GM-RAW")
         if typ != "OK":
             raise GmailError(f"Поиск не удался: {data}")
         uids = data[0].decode().split() if data and data[0] else []
         return uids[-limit:]
 
+    def search_since(self, days: int, limit: int = 40) -> list[str]:
+        since = (date.today() - timedelta(days=days)).strftime("%d-%b-%Y")
+        typ, data = self.imap.uid("SEARCH", "SINCE", since)
+        uids = data[0].decode().split() if typ == "OK" and data and data[0] else []
+        return uids[-limit:]
+
     def fetch(self, uids: list[str]) -> Iterator[dict[str, Any]]:
         for uid in uids:
-            typ, data = self.imap.uid("FETCH", uid, "(X-GM-LABELS BODY.PEEK[])")
+            typ, data = self.imap.uid("FETCH", uid, "(FLAGS X-GM-LABELS BODY.PEEK[])")
             if typ != "OK" or not data or not isinstance(data[0], tuple):
                 continue
             meta = data[0][0].decode(errors="replace")
             labels = re.search(r"X-GM-LABELS \((.*?)\)", meta)
-            yield parse_message(uid, data[0][1], labels.group(1) if labels else "")
+            flags = re.search(r"FLAGS \((.*?)\)", meta)
+            yield parse_message(uid, data[0][1], labels.group(1) if labels else "", flags.group(1) if flags else "")
 
     def ensure_label(self, label: str) -> None:
         self.imap.create(f'"{label}"')  # если ярлык уже есть, Gmail просто вернёт NO
@@ -122,3 +160,11 @@ class GmailClient:
 
     def archive(self, uid: str) -> None:
         self.imap.uid("STORE", uid, "-X-GM-LABELS", "(\\Inbox)")
+
+    def mark_read(self, uid: str) -> None:
+        self.imap.uid("STORE", uid, "+FLAGS", "(\\Seen)")
+
+    def move_to_inbox(self, uid: str) -> bool:
+        """Из «Спама» во «Входящие» (Gmail поддерживает MOVE)."""
+        typ, _ = self.imap.uid("MOVE", uid, "INBOX")
+        return typ == "OK"

@@ -5,7 +5,21 @@ services:
     env_file: .env
     environment:
       DAILYTIMER_PORT: 8080
+      OLLAMA_URL: http://ollama:11434
     ports:
       - "${DAILYTIMER_PORT:-8080}:8080"
     volumes:
       - ./data:/data
+    shm_size: 512m
+    depends_on:
+      - ollama
+
+  # Локальный ИИ без ключей. Наружу не торчит — доступен только DailyTimer.
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ./data/ollama:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: 10m
+      OLLAMA_NUM_PARALLEL: 1

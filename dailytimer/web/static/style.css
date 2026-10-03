@@ -44,3 +44,8 @@ summary { cursor: pointer; font-weight: 600; }
   background: var(--bg); color: var(--text); font: inherit;
 }
 .settings label.check { display: flex; gap: 8px; align-items: center; }
+.weather { color: var(--muted); }
+.attention { border-color: var(--accent); }
+.digest { margin: 0 0 8px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.settings details { margin-top: 10px; }
+.settings button[formaction] { margin-top: 6px; }

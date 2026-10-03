@@ -103,21 +103,38 @@ def _occurrences(event: Any, dtstart: datetime, lo: datetime, hi: datetime) -> l
     return [d for d in rrule.between(lo, hi, inc=True) if d not in exdates]
 
 
+def _download(url: str, auth: tuple[str, str] | None = None) -> bytes:
+    try:
+        resp = httpx.get(url.replace("webcal://", "https://"), auth=auth, timeout=30, follow_redirects=True)
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ScheduleError(f"Не удалось скачать календарь {url}: {exc}") from exc
+    return resp.content
+
+
 def fetch(settings: dict[str, Any], today: date, days: int = 7) -> dict[str, Any]:
+    """ICS-ссылка вуза, ручная таблица и дополнительные календари (Google, Яндекс, Outlook)."""
     tz = ZoneInfo(settings.get("timezone") or "Europe/Moscow")
     lessons = parse_manual(settings.get("schedule_manual", ""), today, days)
+    errors = []
     url = settings.get("schedule_ics_url", "").strip()
     if url:
         auth = None
-        if settings.get("schedule_login"):
+        if settings.get("schedule_login") and not settings.get("schedule_portal_url"):
             auth = (settings["schedule_login"], settings.get("schedule_password", ""))
+        lessons += parse_ics(_download(url, auth), today, days, tz)
+    # Доп. календари: по строке «Название | ссылка» или просто ссылка.
+    for line in (settings.get("calendars_extra") or "").splitlines():
+        if not line.strip():
+            continue
+        name, _, link = line.rpartition("|")
         try:
-            resp = httpx.get(url.replace("webcal://", "https://"), auth=auth, timeout=30, follow_redirects=True)
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise ScheduleError(f"Не удалось скачать расписание: {exc}") from exc
-        lessons += parse_ics(resp.content, today, days, tz)
-    if not url and not lessons:
-        raise ScheduleError("Расписание не настроено")
+            events = parse_ics(_download(link.strip()), today, days, tz)
+        except (ScheduleError, ValueError) as exc:
+            errors.append(str(exc))
+            continue
+        for event in events:
+            event["source"] = name.strip() or "календарь"
+        lessons += events
     lessons.sort(key=lambda lesson: lesson["start"])
-    return {"lessons": lessons}
+    return {"lessons": lessons, "errors": errors}

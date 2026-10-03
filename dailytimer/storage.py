@@ -15,27 +15,48 @@ from cryptography.fernet import Fernet, InvalidToken
 DATA_DIR = Path(os.environ.get("DAILYTIMER_DATA", Path.cwd() / "data"))
 
 # Поля настроек, которые хранятся только в зашифрованном виде.
-SECRET_FIELDS = {"gmail_app_password", "github_token", "ai_api_key", "schedule_password"}
+SECRET_FIELDS = {"gmail_app_password", "github_token", "ai_api_key", "schedule_password", "telegram_bot_token"}
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "timezone": "Europe/Moscow",
     "sync_interval_minutes": 15,
     "plan_time": "07:00",
+    "wake_time": "08:00",
+    "sleep_time": "23:30",
+    # Gmail
     "gmail_email": "",
     "gmail_app_password": "",
     "gmail_apply_labels": True,
-    "gmail_archive_promo": False,
+    "gmail_cleanup": True,
+    "gmail_receipts_archive": True,
+    "gmail_rescue_spam": True,
+    # GitHub
     "github_token": "",
-    "schedule_ics_url": "",
-    "schedule_manual": "",
+    # Расписание: личный кабинет (основной путь), ICS, ручная таблица
+    "schedule_portal_url": "",
+    "schedule_page_url": "",
     "schedule_login": "",
     "schedule_password": "",
+    "schedule_refresh_hours": 6,
+    "schedule_ics_url": "",
+    "schedule_manual": "",
+    "calendars_extra": "",
+    # Подписки
     "subscriptions_manual": "",
-    "ai_provider": "gemini",
+    # ИИ: auto = локальная модель на сервере, если не ответила — бесплатное облако без ключа
+    "ai_mode": "auto",
+    "ai_local_url": "",
+    "ai_local_model": "",
+    "ai_custom_url": "",
+    "ai_custom_model": "",
     "ai_api_key": "",
-    "ai_model": "",
-    "wake_time": "08:00",
-    "sleep_time": "23:30",
+    # Дополнительно
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
+    "telegram_notify_mail": True,
+    "weather_city": "",
+    "rss_feeds": "",
+    "codeforces": False,
 }
 
 
@@ -61,10 +82,18 @@ class Storage:
                 day TEXT PRIMARY KEY, content TEXT NOT NULL, engine TEXT NOT NULL, created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS sorted_mail (
-                uid TEXT PRIMARY KEY, category TEXT NOT NULL, sorted_at TEXT NOT NULL
+                uid TEXT PRIMARY KEY, category TEXT NOT NULL, sorted_at TEXT NOT NULL, analysis TEXT
             );
+            CREATE TABLE IF NOT EXISTS receipts (
+                uid TEXT PRIMARY KEY, day TEXT, sender TEXT, subject TEXT, amount REAL, currency TEXT
+            );
+            CREATE TABLE IF NOT EXISTS notified (key TEXT PRIMARY KEY, at TEXT NOT NULL);
             """
         )
+        try:  # базы от первой версии
+            self._db.execute("ALTER TABLE sorted_mail ADD COLUMN analysis TEXT")
+        except sqlite3.OperationalError:
+            pass
 
     def _load_key(self) -> bytes:
         env_key = os.environ.get("DAILYTIMER_SECRET_KEY")
@@ -152,19 +181,47 @@ class Storage:
 
     # ---- mail sorting log ----------------------------------------------
 
-    def sorted_uids(self, uids: list[str]) -> dict[str, str]:
+    def mail_analysis(self, uids: list[str]) -> dict[str, dict[str, Any]]:
         if not uids:
             return {}
         marks = ",".join("?" * len(uids))
         with self._lock:
             rows = self._db.execute(
-                f"SELECT uid, category FROM sorted_mail WHERE uid IN ({marks})", uids
+                f"SELECT uid, category, analysis FROM sorted_mail WHERE uid IN ({marks})", uids
             ).fetchall()
-        return {row["uid"]: row["category"] for row in rows}
+        return {
+            row["uid"]: json.loads(row["analysis"]) if row["analysis"] else {"category": row["category"]}
+            for row in rows
+        }
 
-    def mark_sorted(self, uid: str, category: str) -> None:
+    def save_mail_analysis(self, uid: str, analysis: dict[str, Any]) -> None:
         with self._lock, self._db:
             self._db.execute(
-                "INSERT OR REPLACE INTO sorted_mail(uid, category, sorted_at) VALUES(?, ?, ?)",
-                (uid, category, _now()),
+                "INSERT OR REPLACE INTO sorted_mail(uid, category, sorted_at, analysis) VALUES(?, ?, ?, ?)",
+                (uid, analysis["category"], _now(), json.dumps(analysis, ensure_ascii=False)),
             )
+
+    # ---- receipts ledger -----------------------------------------------
+
+    def add_receipt(self, uid: str, day: str | None, sender: str, subject: str,
+                    amount: float | None, currency: str | None) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT OR IGNORE INTO receipts(uid, day, sender, subject, amount, currency) VALUES(?, ?, ?, ?, ?, ?)",
+                (uid, day, sender, subject, amount, currency),
+            )
+
+    def receipts(self, since: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM receipts WHERE day >= ? ORDER BY day DESC", (since,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ---- notifications --------------------------------------------------
+
+    def first_time(self, key: str) -> bool:
+        """True, если по этому ключу ещё не уведомляли (и помечает его)."""
+        with self._lock, self._db:
+            cur = self._db.execute("INSERT OR IGNORE INTO notified(key, at) VALUES(?, ?)", (key, _now()))
+            return cur.rowcount == 1
