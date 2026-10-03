@@ -33,6 +33,16 @@ LOCAL_MODELS = {
 }
 
 
+# Те же модели в формате GGUF на Hugging Face — запасной источник, если реестр Ollama
+# (registry.ollama.ai) недоступен с сервера. Ollama умеет скачивать их напрямую: hf.co/<repo>:<квантизация>.
+HF_MIRRORS = {
+    "qwen2.5:1.5b": "hf.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M",
+    "qwen2.5:3b": "hf.co/bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M",
+    "qwen2.5:7b": "hf.co/bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M",
+    "gemma3:4b": "hf.co/ggml-org/gemma-3-4b-it-GGUF:Q4_K_M",
+}
+
+
 class AIError(RuntimeError):
     pass
 
@@ -48,46 +58,68 @@ class OllamaBackend(Backend):
     """Нативный API Ollama: умеет format=json и большой контекст."""
 
     _pull_lock = threading.Lock()
-    _last_failed_pull = 0.0  # после неудачи не пытаемся снова 10 минут
+    _last_failed_pull: float | None = None  # после неудачи не пытаемся снова 10 минут
 
     def __init__(self, url: str, model: str, timeout: float = 600):
         self.url = url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.name = f"local:{model}"
+        self._resolved = False
 
-    def available(self) -> bool:
+    def _installed(self) -> set[str]:
         try:
             tags = httpx.get(f"{self.url}/api/tags", timeout=5).json()
         except (httpx.HTTPError, ValueError):
+            return set()
+        return {m.get("name", "") for m in tags.get("models", [])}
+
+    def _resolve(self, installed: set[str]) -> str | None:
+        """Какое имя модели реально установлено: основное или зеркало с Hugging Face."""
+        for name in (self.model, HF_MIRRORS.get(self.model, "")):
+            if name and (name in installed or f"{name}:latest" in installed):
+                return name
+        return None
+
+    def available(self) -> bool:
+        found = self._resolve(self._installed())
+        if found:
+            self.model = found  # дальше в чате используем то имя, что реально скачано
+        return bool(found)
+
+    def _pull(self, name: str) -> bool:
+        log.info("Скачиваю локальную модель %s (один раз, несколько минут)…", name)
+        try:
+            resp = httpx.post(f"{self.url}/api/pull", json={"model": name, "stream": False}, timeout=3600)
+            resp.raise_for_status()
+            return True
+        except httpx.HTTPError as exc:
+            detail = getattr(getattr(exc, "response", None), "text", "")[:200]
+            log.warning("Не удалось скачать модель %s: %s %s", name, exc, detail)
             return False
-        names = {m.get("name") for m in tags.get("models", [])}
-        return self.model in names or f"{self.model}:latest" in names
 
     def ensure_model(self) -> bool:
         """Скачивает модель, если её ещё нет. Вызывается в фоне при старте."""
-        if time.monotonic() - OllamaBackend._last_failed_pull < 600:
+        failed = OllamaBackend._last_failed_pull
+        if failed is not None and time.monotonic() - failed < 600:
             return False
         if not self._pull_lock.acquire(blocking=False):
             return False  # уже качается в другом потоке — не дублируем
         try:
             if self.available():
                 return True
-            try:
-                log.info("Скачиваю локальную модель %s (один раз, несколько минут)…", self.model)
-                resp = httpx.post(
-                    f"{self.url}/api/pull", json={"model": self.model, "stream": False}, timeout=3600
-                )
-                resp.raise_for_status()
-            except httpx.HTTPError as exc:
-                log.warning("Не удалось скачать модель %s: %s", self.model, exc)
-                OllamaBackend._last_failed_pull = time.monotonic()
-                return False
-            return self.available()
+            mirror = HF_MIRRORS.get(self.model)
+            if self._pull(self.model) or (mirror and self._pull(mirror)):
+                return self.available()
+            OllamaBackend._last_failed_pull = time.monotonic()
+            return False
         finally:
             self._pull_lock.release()
 
     def chat(self, system: str, user: str, temperature: float, want_json: bool) -> str:
+        if not self._resolved:  # модель могла скачаться с зеркала под другим именем
+            self._resolved = True
+            self.available()
         body: dict[str, Any] = {
             "model": self.model,
             "stream": False,

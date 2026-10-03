@@ -47,9 +47,30 @@ docker compose up -d --build --remove-orphans
 git rev-parse HEAD > data/deployed_commit 2>/dev/null || true
 
 echo "==> Скачиваю локальную модель ИИ $OLLAMA_MODEL (один раз, 1–5 ГБ)"
-for _ in 1 2 3 4 5; do
-  docker compose exec -T ollama ollama pull "$OLLAMA_MODEL" && break || sleep 5
+# Запасной источник — та же модель с Hugging Face, если реестр Ollama недоступен с сервера.
+case "$OLLAMA_MODEL" in
+  qwen2.5:1.5b) mirror="hf.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M" ;;
+  qwen2.5:3b)   mirror="hf.co/bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M" ;;
+  qwen2.5:7b)   mirror="hf.co/bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M" ;;
+  gemma3:4b)    mirror="hf.co/ggml-org/gemma-3-4b-it-GGUF:Q4_K_M" ;;
+  *)            mirror="" ;;
+esac
+model_ok=0
+for _ in 1 2 3; do
+  if docker compose exec -T ollama ollama pull "$OLLAMA_MODEL"; then model_ok=1; break; fi
+  sleep 5
 done
+if [ "$model_ok" != 1 ] && [ -n "$mirror" ]; then
+  echo "==> Реестр Ollama недоступен — качаю ту же модель с Hugging Face"
+  for _ in 1 2 3; do
+    if docker compose exec -T ollama ollama pull "$mirror"; then model_ok=1; break; fi
+    sleep 5
+  done
+fi
+if [ "$model_ok" != 1 ]; then
+  echo "!! Модель ИИ не скачалась. Всё остальное работает, план будет по правилам."
+  echo "   DailyTimer сам попробует скачать её снова позже."
+fi
 
 # Ночное автообновление (выключить: AUTO_UPDATE=0 bash install.sh)
 if [ "${AUTO_UPDATE:-1}" = "1" ] && command -v crontab >/dev/null 2>&1; then
