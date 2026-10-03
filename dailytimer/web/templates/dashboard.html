@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% macro status(snap) -%}
+  {% if snap.error %}<span class="badge err" title="{{ snap.error }}">ошибка</span>
+  {% elif snap.updated_at %}<span class="badge ok">{{ snap.updated_at[11:16] }} UTC</span>
+  {% else %}<span class="badge">не подключено</span>{% endif %}
+{%- endmacro %}
+{% block content %}
+<div class="actions">
+  <h1>{{ today.strftime('%d.%m.%Y') }}</h1>
+  <form method="post" action="/sync"><button>Обновить данные</button></form>
+  <form method="post" action="/plan"><button class="primary">Составить план</button></form>
+</div>
+
+{% if not configured %}
+<div class="card notice">Пока ничего не подключено. Зайди в <a href="/settings">Подключения</a> — достаточно ввести логины и ключи один раз, дальше всё обновляется само.</div>
+{% endif %}
+
+<div class="grid">
+  <section class="card wide">
+    <h2>План на день {% if plan %}<span class="badge">{{ plan.engine }}</span>{% endif %}</h2>
+    {% if plan %}<div class="plan">{{ plan_html | safe }}</div>
+    {% else %}<p class="muted">План появится автоматически утром или по кнопке «Составить план».</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Пары {{ status(snaps.schedule) }}</h2>
+    {% for l in today_lessons %}
+      <div class="row"><b>{{ l.start[11:16] }}–{{ l.end[11:16] }}</b> {{ l.title }} <span class="muted">{{ l.location }}</span></div>
+    {% else %}<p class="muted">Сегодня пар нет.</p>{% endfor %}
+    {% if upcoming_lessons %}<h3>Дальше</h3>
+      {% for l in upcoming_lessons %}
+        <div class="row small"><b>{{ l.start[5:10] }} {{ l.start[11:16] }}</b> {{ l.title }}</div>
+      {% endfor %}
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>GitHub {{ status(snaps.github) }}</h2>
+    {% set gh = snaps.github.data or {} %}
+    {% for key, title in [('review_requests', 'Ждут ревью'), ('assigned', 'Назначено на меня'), ('my_prs', 'Мои PR')] %}
+      {% if gh[key] %}<h3>{{ title }} ({{ gh[key]|length }})</h3>
+        {% for i in gh[key][:8] %}<div class="row small"><a href="{{ i.url }}" target="_blank">{{ i.repo }}#{{ i.number }}</a> {{ i.title }}</div>{% endfor %}
+      {% endif %}
+    {% endfor %}
+    {% if gh.notifications %}<p class="muted">Уведомлений: {{ gh.notifications|length }}</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Подписки {{ status(snaps.subscriptions) }}</h2>
+    {% for s in (snaps.subscriptions.data or {}).get('items', []) %}
+      <div class="row {% if s.days_left is not none and s.days_left <= 3 %}warn{% endif %}">
+        <b>{{ s.name }}</b>
+        {% if s.amount %}{{ s.amount }} {{ s.currency }}{% endif %}
+        {% if s.next_charge %}<span class="muted">· списание {{ s.next_charge }} ({{ s.days_left }} дн.)</span>{% endif %}
+      </div>
+    {% else %}<p class="muted">Подписки не найдены.</p>{% endfor %}
+  </section>
+
+  <section class="card wide">
+    <h2>Почта {{ status(snaps.gmail) }}</h2>
+    {% for key, title, mails in mail_groups %}
+      <details {% if key in ['important', 'study'] %}open{% endif %}>
+        <summary>{{ title }} ({{ mails|length }})</summary>
+        {% for m in mails[:20] %}
+          <div class="row small"><b>{{ m.subject }}</b> <span class="muted">— {{ m.from }}</span></div>
+        {% endfor %}
+      </details>
+    {% else %}<p class="muted">Писем нет или почта не подключена.</p>{% endfor %}
+  </section>
+</div>
+{% endblock %}

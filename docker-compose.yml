@@ -1,0 +1,11 @@
+services:
+  dailytimer:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DAILYTIMER_PORT: 8080
+    ports:
+      - "${DAILYTIMER_PORT:-8080}:8080"
+    volumes:
+      - ./data:/data

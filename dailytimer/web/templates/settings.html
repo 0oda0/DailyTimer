@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Подключения</h1>
+{% if saved %}<div class="card notice">Сохранено. Данные обновятся в течение минуты — или нажми «Обновить данные» на главной.</div>{% endif %}
+<form method="post" action="/settings" class="settings">
+
+  <section class="card">
+    <h2>Gmail</h2>
+    <p class="muted">Google не пускает сторонние программы по обычному паролю. Один раз создай
+      <a href="https://myaccount.google.com/apppasswords" target="_blank">пароль приложения</a>
+      (нужна включённая двухэтапная проверка) и вставь его сюда.</p>
+    <label>Адрес <input name="gmail_email" type="email" value="{{ s.gmail_email }}" placeholder="you@gmail.com"></label>
+    <label>Пароль приложения <input name="gmail_app_password" type="password" value="{{ s.gmail_app_password }}" placeholder="xxxx xxxx xxxx xxxx"></label>
+    <label class="check"><input type="checkbox" name="gmail_apply_labels" {% if s.gmail_apply_labels %}checked{% endif %}> Вешать ярлыки DT/* в Gmail</label>
+    <label class="check"><input type="checkbox" name="gmail_archive_promo" {% if s.gmail_archive_promo %}checked{% endif %}> Убирать рекламу из «Входящих»</label>
+  </section>
+
+  <section class="card">
+    <h2>GitHub</h2>
+    <p class="muted">GitHub не даёт входить в API по паролю. Создай
+      <a href="https://github.com/settings/tokens/new?scopes=repo,notifications,read:user&description=DailyTimer" target="_blank">токен</a>
+      (ссылка уже с нужными правами) и вставь его.</p>
+    <label>Токен <input name="github_token" type="password" value="{{ s.github_token }}" placeholder="ghp_..."></label>
+  </section>
+
+  <section class="card">
+    <h2>Расписание университета</h2>
+    <label>Ссылка на календарь (ICS / webcal) <input name="schedule_ics_url" value="{{ s.schedule_ics_url }}" placeholder="https://.../schedule.ics"></label>
+    <label>Логин (если ссылка требует) <input name="schedule_login" value="{{ s.schedule_login }}"></label>
+    <label>Пароль <input name="schedule_password" type="password" value="{{ s.schedule_password }}"></label>
+    <label>Или вручную — по строке на пару
+      <textarea name="schedule_manual" rows="6" placeholder="пн 09:00-10:30 Матанализ, ауд. 301&#10;ср 10:40-12:10 Программирование чёт">{{ s.schedule_manual }}</textarea>
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>Подписки</h2>
+    <p class="muted">Находятся автоматически по чекам в Gmail. Можно добавить вручную: «название сумма валюта день».</p>
+    <textarea name="subscriptions_manual" rows="4" placeholder="Spotify 299 RUB 15&#10;ChatGPT 20 USD 3">{{ s.subscriptions_manual }}</textarea>
+  </section>
+
+  <section class="card">
+    <h2>ИИ (бесплатно)</h2>
+    <p class="muted">Рекомендую Gemini: ключ бесплатно за минуту на
+      <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com</a>.
+      Альтернатива — <a href="https://console.groq.com/keys" target="_blank">Groq</a> (Llama 3.3 70B).</p>
+    <label>Провайдер
+      <select name="ai_provider">
+        {% for name, p in providers.items() %}
+          <option value="{{ name }}" {% if s.ai_provider == name %}selected{% endif %}>{{ name }} — {{ p.model }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>API-ключ <input name="ai_api_key" type="password" value="{{ s.ai_api_key }}"></label>
+    <label>Модель (пусто — по умолчанию) <input name="ai_model" value="{{ s.ai_model }}"></label>
+  </section>
+
+  <section class="card">
+    <h2>Режим дня</h2>
+    <label>Часовой пояс <input name="timezone" value="{{ s.timezone }}"></label>
+    <label>Подъём <input name="wake_time" type="time" value="{{ s.wake_time }}"></label>
+    <label>Отбой <input name="sleep_time" type="time" value="{{ s.sleep_time }}"></label>
+    <label>Когда составлять план <input name="plan_time" type="time" value="{{ s.plan_time }}"></label>
+    <label>Обновлять данные каждые N минут <input name="sync_interval_minutes" type="number" min="5" value="{{ s.sync_interval_minutes }}"></label>
+  </section>
+
+  <button class="primary big">Сохранить</button>
+</form>
+{% endblock %}
