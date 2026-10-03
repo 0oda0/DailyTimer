@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="actions">
+  <h1>🧠 Память</h1>
+  <span class="muted small">факты о тебе, которые ИИ учитывает в плане дня и в чате</span>
+</div>
+{% if saved %}<div class="card notice">Сохранено.</div>{% endif %}
+<div class="grid">
+  <section class="card">
+    <h2>Что я о тебе помню <span class="badge">{{ facts|length }}</span></h2>
+    <form method="post" action="/memory/add" class="quickadd">
+      <input name="fact" placeholder="Например: по средам тренировка в 19:00; лучше всего работаю вечером" required>
+      <button class="primary">Запомнить</button>
+    </form>
+    {% for f in facts %}
+      <div class="row memory-row">
+        <span>{{ f }}</span>
+        <form method="post" action="/memory/delete" class="inline">
+          <input type="hidden" name="index" value="{{ loop.index }}">
+          <button class="ghost" title="Забыть">✕</button>
+        </form>
+      </div>
+    {% else %}
+      <p class="muted small">Пока пусто. Расскажи о себе в чате («запомни, что …») или добавь здесь.
+        Ассистент сам запоминает устойчивые факты из разговоров и дневника.</p>
+    {% endfor %}
+  </section>
+  <section class="card settings">
+    <h2>Файл памяти</h2>
+    <p class="muted small">Это обычный файл <code>{{ path }}</code> — по факту на строку, начиная с «- ».
+      Можно править здесь или прямо на сервере.</p>
+    <form method="post" action="/memory/raw">
+      <textarea name="raw" rows="16" spellcheck="false">{{ raw }}</textarea>
+      <button class="primary">Сохранить файл</button>
+    </form>
+  </section>
+</div>
+<div class="card">
+  <h2>Как пополняется память</h2>
+  <ul class="small">
+    <li>в чате и Telegram-боте: «запомни, что …», «забудь …», «что ты обо мне помнишь?»</li>
+    <li>ИИ сам запоминает, если ты рассказал о себе что-то устойчивое (режим, предпочтения, цели)</li>
+    <li>при «Подвести итоги» недели — устойчивые факты из дневника</li>
+  </ul>
+</div>
+{% endblock %}

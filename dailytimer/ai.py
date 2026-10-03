@@ -59,6 +59,21 @@ def server_ram_gb() -> float:
     return 0.0
 
 
+def free_local_models(url: str | None = None) -> int:
+    """Выгружает модели Ollama из памяти (keep_alive=0). Нужно на слабых серверах перед запуском браузера."""
+    base = (url or DEFAULT_LOCAL_URL).rstrip("/")
+    try:
+        loaded = httpx.get(f"{base}/api/ps", timeout=5).json().get("models", [])
+    except (httpx.HTTPError, ValueError):
+        return 0
+    for model in loaded:
+        try:
+            httpx.post(f"{base}/api/generate", json={"model": model.get("name"), "keep_alive": 0}, timeout=30)
+        except httpx.HTTPError:
+            pass
+    return len(loaded)
+
+
 def recommended_model(ram_gb: float) -> str:
     fitting = [m for m, need in sorted(MODEL_MIN_RAM.items(), key=lambda kv: kv[1]) if ram_gb + 0.5 >= need]
     return fitting[-1] if fitting else "qwen2.5:1.5b"

@@ -17,6 +17,7 @@ from .. import sync
 from ..ai import AIClient, AIError
 from ..assistant import Assistant
 from ..life import MOODS, Focus, Habits, Journal, week_stats
+from ..memory import Memory
 from ..storage import Storage
 from ..tasks import PRIORITY_NAMES, Tasks, auto_schedule, parse_quick, timeline
 
@@ -148,6 +149,34 @@ def register(app: FastAPI, storage: Storage, templates: Jinja2Templates, auth: C
     def schedule_refresh() -> Any:
         threading.Thread(target=lambda: sync.refresh_schedule(storage), daemon=True).start()
         return RedirectResponse("/schedule?refreshing=1", status_code=303)
+
+    # ------------------------------------------------------------ память
+
+    @app.get("/memory", response_class=HTMLResponse, dependencies=guard)
+    def memory_page(request: Request) -> Any:
+        mem = Memory(storage)
+        return templates.TemplateResponse(request, "memory.html", {
+            "facts": mem.facts(), "raw": mem.raw(), "path": str(mem.path),
+            "saved": "saved" in request.query_params,
+        })
+
+    @app.post("/memory/add", dependencies=guard)
+    async def memory_add(request: Request) -> Any:
+        form = await request.form()
+        Memory(storage).add(str(form.get("fact", "")), "вручную")
+        return RedirectResponse("/memory", status_code=303)
+
+    @app.post("/memory/delete", dependencies=guard)
+    async def memory_delete(request: Request) -> Any:
+        form = await request.form()
+        Memory(storage).remove(str(form.get("index", "")))
+        return RedirectResponse("/memory", status_code=303)
+
+    @app.post("/memory/raw", dependencies=guard)
+    async def memory_raw(request: Request) -> Any:
+        form = await request.form()
+        Memory(storage).save_raw(str(form.get("raw", "")))
+        return RedirectResponse("/memory?saved=1", status_code=303)
 
     # ------------------------------------------------------------ чат
 
@@ -285,6 +314,18 @@ def register(app: FastAPI, storage: Storage, templates: Jinja2Templates, auth: C
             except AIError as exc:
                 text = f"ИИ недоступен: {exc}"
         storage.save_snapshot("weekly_review", {"text": text, "at": datetime.now().isoformat(timespec="minutes")})
+        # Устойчивые факты из дневника — в память, чтобы учитывать их в следующих планах.
+        if ai is not None and notes:
+            try:
+                found = ai.chat_json(
+                    "Из записей дневника выпиши до 3 УСТОЙЧИВЫХ фактов о человеке, полезных для планирования дня "
+                    "(режим, когда продуктивен, что мешает, регулярные дела, цели). Разовые события не бери. "
+                    'Ответ строго JSON: {"facts": ["...", "..."]}. Если нечего — {"facts": []}.',
+                    " | ".join(f"{n['day']}: настроение {n['mood']}; {n['wins']} {n['notes']}" for n in notes))
+                for fact in (found.get("facts") or [])[:3] if isinstance(found, dict) else []:
+                    Memory(storage).add(str(fact), "из дневника")
+            except AIError:
+                pass
 
     # ------------------------------------------------------------ календарь для телефона
 

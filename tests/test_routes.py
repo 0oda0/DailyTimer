@@ -128,3 +128,36 @@ def test_schedule_page_and_refresh(tmp_path, monkeypatch):
         time.sleep(0.05)
     page = client.get("/schedule").text
     assert calls and "Матанализ (лекция)" in page and "А-101" in page and "БВТ2401" in page and "сегодня" in page
+
+
+def test_portal_retries_transient_errors_but_not_bad_password(tmp_path, monkeypatch):
+    from datetime import date
+
+    import pytest
+
+    from dailytimer import sync
+
+    monkeypatch.setattr("dailytimer.ai.server_ram_gb", lambda: 16.0)
+    calls = []
+
+    def flaky(settings, today, ai, state):
+        calls.append(1)
+        if len(calls) == 1:
+            raise TimeoutError("Timeout 60000ms exceeded")  # браузер не успел на перегруженном сервере
+        return {"lessons": [{"title": "X"}]}
+
+    monkeypatch.setattr(sync, "_fetch_portal_once", flaky)
+    state = tmp_path / "session.json"
+    state.write_text("{}")
+    assert sync.fetch_portal({}, date(2026, 10, 5), None, str(state)) == {"lessons": [{"title": "X"}]}
+    assert len(calls) == 2 and not state.exists()  # протухшая сессия удалена перед повтором
+
+    def bad_password(settings, today, ai, state):
+        calls.append(1)
+        raise RuntimeError("Вход в ЛК МТУСИ не удался: неверный логин или пароль")
+
+    calls.clear()
+    monkeypatch.setattr(sync, "_fetch_portal_once", bad_password)
+    with pytest.raises(RuntimeError):
+        sync.fetch_portal({}, date(2026, 10, 5), None, str(state))
+    assert len(calls) == 1

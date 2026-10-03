@@ -197,7 +197,9 @@ def triage(storage: Storage, settings: dict[str, Any], ai: AIClient | None,
             verdicts: dict[str, dict[str, Any]] = {}
             for start in range(0, len(mails), 40):
                 chunk = mails[start : start + 40]
-                verdicts.update(sorter.analyze(chunk, ai, batch=20))
+                # Только правила: ИИ на тысячах писем занимал бы процессор и память сервера часами
+                # (на 3 ГБ из-за этого переставало грузиться расписание). Свежую почту ИИ разбирает отдельно.
+                verdicts.update(sorter.analyze(chunk, None))
                 _save(storage, progress=f"разбираю «Входящие»: {min(start + 40, len(mails))} из {len(mails)}…",
                       result=result)
             buckets: dict[str, list[str]] = {"trash": [], "receipts": [], "archive": []}

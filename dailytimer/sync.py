@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
@@ -256,6 +257,29 @@ def schedule_refreshing() -> bool:
 
 
 def fetch_portal(settings: dict[str, Any], today, ai: AIClient | None, state: str) -> dict[str, Any]:
+    """Загрузка из кабинета с повтором: браузер на слабом сервере иногда падает или не успевает."""
+    from .ai import free_local_models, server_ram_gb
+
+    if server_ram_gb() and server_ram_gb() < 6:
+        freed = free_local_models(settings.get("ai_local_url") or None)
+        if freed:
+            log.info("Выгрузил ИИ-модель из памяти перед входом в кабинет (RAM %.1f ГБ)", server_ram_gb())
+    last: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            return _fetch_portal_once(settings, today, ai, state)
+        except Exception as exc:  # noqa: BLE001
+            text = str(exc)
+            if "логин" in text or "пароль" in text or "не пустил" in text:
+                raise  # неверные данные — повтор не поможет
+            log.warning("Кабинет, попытка %s: %s: %s", attempt, type(exc).__name__, text)
+            last = exc
+            if attempt == 1 and state and os.path.exists(state):
+                os.remove(state)  # сохранённая сессия могла протухнуть — войдём заново
+    raise RuntimeError(f"Кабинет не загрузился: {type(last).__name__}: {str(last)[:300]}") from last
+
+
+def _fetch_portal_once(settings: dict[str, Any], today, ai: AIClient | None, state: str) -> dict[str, Any]:
     """Для известных вузов — точный API, для остальных — универсальный разбор страницы."""
     url = settings.get("schedule_portal_url") or settings.get("schedule_page_url") or ""
     if mtuci.is_mtuci(url):
@@ -376,6 +400,9 @@ def build_plan(storage: Storage, send: bool = False) -> dict[str, Any]:
     views = Tasks(storage).views(today)
     data["tasks"] = {k: views[k] for k in ("overdue", "today", "upcoming", "inbox")}
     data["habits"] = Habits(storage).overview(today)
+    from .memory import Memory
+
+    data["memory"] = Memory(storage).prompt_block()
     content, engine = planner.make_plan(data, settings, today)
     storage.save_plan(today.isoformat(), content, engine)
     if send:

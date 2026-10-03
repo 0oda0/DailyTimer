@@ -233,3 +233,5 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .lesson { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .lesson:last-child { border-bottom: 0; }
 .lesson-time { font-variant-numeric: tabular-nums; min-width: 48px; font-weight: 600; }
+.memory-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.settings textarea[name=raw] { font-family: ui-monospace, monospace; font-size: 13px; }

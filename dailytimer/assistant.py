@@ -20,6 +20,7 @@ from typing import Any
 from . import planner, sync
 from .ai import AIClient, AIError
 from .life import Habits
+from .memory import Memory
 from .storage import Storage
 from .tasks import PRIORITY_NAMES, Tasks, auto_schedule, decorate, parse_quick
 
@@ -30,7 +31,9 @@ HELP = (
     "• «добавь сдать лабу завтра в 15 !1 #учеба» — задача\n"
     "• «готово лаба» или «/done 12» — закрыть задачу\n"
     "• «что сегодня» — сводка дня, «распланируй день» — разложу задачи по свободным окнам\n"
-    "• «/tasks» — список задач"
+    "• «/tasks» — список задач\n"
+    "• «запомни, что по средам у меня тренировка в 19:00» — факт о тебе для будущих планов\n"
+    "• «что ты обо мне помнишь?», «забудь тренировка»"
 )
 
 _ADD = re.compile(r"^\s*(?:/add|добавь(?:\s+задачу)?|напомни(?:\s+мне)?|запиши|задача:)\s*:?\s+(.+)$", re.I | re.S)
@@ -38,6 +41,9 @@ _DONE = re.compile(r"^\s*(?:/done|готово|сделал[аи]?|выполн�
 _TODAY = re.compile(r"^\s*(?:/today|/start|что (?:у меня )?сегодня\??|план на сегодня\??)\s*$", re.I)
 _PLAN = re.compile(r"^\s*(?:/plan|распланируй(?: мой)? день|разложи задачи)\s*$", re.I)
 _TASKS = re.compile(r"^\s*(?:/tasks|мои задачи|список задач)\s*$", re.I)
+_REMEMBER = re.compile(r"^\s*(?:/remember|запомни(?:,?\s*что)?)\s*[:,]?\s+(.+)$", re.I | re.S)
+_FORGET = re.compile(r"^\s*(?:/forget|забудь(?:,?\s*что)?)\s*[:,]?\s+(.+)$", re.I | re.S)
+_RECALL = re.compile(r"^\s*(?:/memory|что ты (?:обо мне )?(?:знаешь|помнишь)(?: обо мне)?\??|моя память)\s*$", re.I)
 _HELP = re.compile(r"^\s*(?:/help|помощь|что ты умеешь\??)\s*$", re.I)
 _ACTION = re.compile(r"^\s*ACTION:\s*(\{.*\})\s*$", re.M)
 
@@ -48,7 +54,11 @@ ACTION: {"type": "add", "text": "<задача в формате быстрог�
 ACTION: {"type": "done", "id": <номер задачи>}
 ACTION: {"type": "move", "id": <номер>, "date": "YYYY-MM-DD", "time": "HH:MM или пусто"}
 ACTION: {"type": "plan"}  — разложить задачи на сегодня по свободным окнам
-Действия добавляй только если пользователь об этом просит или явно согласен.
+ACTION: {"type": "remember", "fact": "<устойчивый факт о пользователе одной фразой>"}
+ACTION: {"type": "forget", "fact": "<часть текста факта, который больше не верен>"}
+Задачи добавляй только если пользователь об этом просит или явно согласен.
+Если пользователь сообщил о себе что-то устойчивое (режим дня, предпочтения, цели, ограничения,
+регулярные дела) — запомни это через remember, без лишних вопросов. Разовые события не запоминай.
 
 Сейчас: {now}.
 
@@ -101,6 +111,12 @@ class Assistant:
             return self._plan(today)
         if _TASKS.match(text):
             return self._list(today)
+        if m := _REMEMBER.match(text):
+            return self._remember(m.group(1))
+        if m := _FORGET.match(text):
+            return self._forget(m.group(1))
+        if _RECALL.match(text):
+            return self._recall()
 
         ai = AIClient.from_settings(settings)
         if ai is None:
@@ -141,10 +157,32 @@ class Assistant:
                         done_notes.append(f"📅 Перенёс «{task['title']}» на {action.get('date')} {action.get('time') or ''}".strip())
                 elif kind == "plan":
                     done_notes.append(self._plan(today))
+                elif kind == "remember" and action.get("fact"):
+                    done_notes.append(self._remember(str(action["fact"]), source="из чата"))
+                elif kind == "forget" and action.get("fact"):
+                    done_notes.append(self._forget(str(action["fact"])))
             except (ValueError, TypeError) as exc:
                 log.warning("Не удалось выполнить действие %s: %s", action, exc)
         text = _ACTION.sub("", raw).strip()
         return "\n\n".join(x for x in [text, *done_notes] if x)
+
+    def _remember(self, fact: str, source: str = "") -> str:
+        if Memory(self.db).add(fact, source):
+            return f"🧠 Запомнил: {fact.strip()}"
+        return "🧠 Это я уже помню."
+
+    def _forget(self, query: str) -> str:
+        removed = Memory(self.db).remove(query)
+        if not removed:
+            return f"Не нашёл в памяти «{query.strip()}». Посмотреть всё: «что ты обо мне помнишь?»"
+        return "🗑 Забыл: " + "; ".join(removed)
+
+    def _recall(self) -> str:
+        facts = Memory(self.db).facts()
+        if not facts:
+            return "Пока ничего о тебе не помню. Расскажи: «запомни, что …»"
+        return "🧠 Что я о тебе помню:\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(facts, 1)) + \
+            "\n\nУдалить: «забудь <номер или слово>»"
 
     def _add(self, text: str, today: date) -> str:
         parsed = parse_quick(text, today)
@@ -228,7 +266,7 @@ class Assistant:
     def context(self, today: date) -> str:
         settings = self.db.get_settings()
         data = sync.collect(self.db)
-        parts = [planner.build_context(data, settings, today)]
+        parts = [planner.build_context({**data, "memory": Memory(self.db).prompt_block()}, settings, today)]
         views = self.tasks.views(today)
         task_lines = []
         for key, title in (("overdue", "просрочено"), ("today", "сегодня"), ("upcoming", "на неделе"),
