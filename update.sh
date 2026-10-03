@@ -16,7 +16,14 @@ if [ "$(git rev-parse HEAD)" = "$remote" ] && [ "$deployed" = "$remote" ]; then
 fi
 git pull -q --ff-only origin "$branch"
 echo "$(date '+%F %T') собираю $(git rev-parse --short HEAD)…"
-if ! docker compose up -d --build --remove-orphans; then
+# Docker Hub иногда отвечает 429 (лимит запросов) — пробуем несколько раз с паузой.
+ok=0
+for attempt in 1 2 3; do
+  if docker compose up -d --build --remove-orphans; then ok=1; break; fi
+  echo "$(date '+%F %T') сборка не удалась (попытка $attempt), повтор через 30 с…" >&2
+  sleep 30
+done
+if [ "$ok" != 1 ]; then
   echo "$(date '+%F %T') ОШИБКА: сборка не удалась, продолжает работать прежняя версия" >&2
   exit 1
 fi
