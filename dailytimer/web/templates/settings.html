@@ -172,6 +172,21 @@
       <button class="primary">Сохранить</button>
     </form>
 
+{% elif section == "server" %}
+    <form method="post" class="settings card">
+      <h2>Агент сервера</h2>
+      <p class="muted">Агент — маленькая служба на VPS, через которую DailyTimer видит диск, порты, контейнеры и git-проекты
+        и обновляет их по кнопке. Ставится сам при <code>bash install.sh</code>, токен подхватывается автоматически —
+        заполнять поля ниже нужно только если агент стоит на другом сервере.</p>
+      <label>Адрес агента <input name="server_agent_url" value="{{ s.server_agent_url }}" placeholder="http://host.docker.internal:9137"></label>
+      <label>Токен агента <input name="server_agent_token" type="password" value="{{ s.server_agent_token }}" placeholder="из /etc/dailytimer-agent.env"></label>
+      <label>Предупреждать, когда диск заполнен на, % <input name="server_disk_alert" type="number" min="50" max="99" value="{{ s.server_disk_alert }}"></label>
+      <label>Проверять обновления проектов раз в N часов <input name="server_check_hours" type="number" min="1" value="{{ s.server_check_hours }}"></label>
+      {{ check("notify_server", "Уведомления в Telegram: диск, новые порты, упавшие контейнеры, обновления проектов, CI") }}
+      <button class="primary">Сохранить</button>
+      <a class="button" href="/server">Открыть раздел «Сервер»</a>
+    </form>
+
 {% elif section == "other" %}
     <form method="post" class="settings card">
       <h2>Режим дня</h2>

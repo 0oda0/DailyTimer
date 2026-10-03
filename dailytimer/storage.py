@@ -17,7 +17,7 @@ DATA_DIR = Path(os.environ.get("DAILYTIMER_DATA", Path.cwd() / "data"))
 # Поля настроек, которые хранятся только в зашифрованном виде.
 SECRET_FIELDS = {
     "gmail_app_password", "github_token", "ai_api_key", "schedule_password", "telegram_bot_token",
-    "tg_api_hash", "tg_session", "tg_pending",
+    "tg_api_hash", "tg_session", "tg_pending", "server_agent_token",
 }
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -81,6 +81,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "notify_receipts": False,
     "notify_errors": True,
     "notify_app_updates": True,
+    # Сервер (VPS)
+    "server_agent_url": "",
+    "server_agent_token": "",
+    "server_disk_alert": 90,
+    "server_check_hours": 1,
+    "notify_server": True,
 }
 
 

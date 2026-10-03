@@ -6,6 +6,9 @@ services:
     environment:
       DAILYTIMER_PORT: 8080
       OLLAMA_URL: http://ollama:11434
+      VPS_AGENT_URL: http://host.docker.internal:9137
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${DAILYTIMER_PORT:-8080}:8080"
     volumes:

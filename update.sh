@@ -14,3 +14,14 @@ git pull -q --ff-only origin "$branch"
 docker compose up -d --build
 docker image prune -f >/dev/null 2>&1 || true
 echo "$(date '+%F %T') обновлено до $(git rev-parse --short HEAD)"
+
+# Новая версия агента сервера — ставим отдельной systemd-задачей: этот скрипт может работать
+# внутри самого агента (кнопка «Обновить» на сайте), и прямой перезапуск оборвал бы его.
+if [ -f /opt/dailytimer-agent/vps_agent.py ] && ! cmp -s agent/vps_agent.py /opt/dailytimer-agent/vps_agent.py; then
+  if command -v systemd-run >/dev/null 2>&1; then
+    systemd-run --quiet --no-block --collect bash "$PWD/agent/install-agent.sh"
+  else
+    bash agent/install-agent.sh
+  fi
+  echo "Агент сервера будет обновлён"
+fi

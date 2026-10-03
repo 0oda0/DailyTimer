@@ -196,3 +196,26 @@ button.chip, a.chip { cursor: pointer; }
   .chat-log { height: calc(100vh - 380px); }
   main { padding: 10px; }
 }
+
+/* ---- сервер ---- */
+.stats-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stats-row .card { margin: 0; }
+.stat b { display: block; font-size: 18px; margin: 4px 0; }
+.meter { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 6px 0; }
+.meter > div { height: 100%; background: var(--ok); }
+.meter.warn > div { background: #f08c00; }
+.meter.bad > div { background: var(--err); }
+.project { display: flex; gap: 12px; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.project:last-child { border-bottom: 0; }
+.project-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.project-actions { text-align: right; flex-shrink: 0; }
+.chip.okc { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.chip.warnc { background: color-mix(in srgb, #f08c00 18%, transparent); color: #f08c00; }
+.err-text { color: var(--err); }
+code { font-size: 12px; background: var(--line); padding: 1px 5px; border-radius: 4px; }
+.job pre { max-height: 360px; overflow: auto; background: #0b0d12; color: #d0d6e0; padding: 12px; border-radius: 8px; font-size: 12px; white-space: pre-wrap; }
+.dot-state { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+.dot-state.on { background: var(--ok); }
+.dot-state.off { background: var(--err); }
+.ports tr.public td:first-child { color: var(--err); }
+@media (max-width: 720px) { .project { flex-direction: column; } .project-actions { text-align: left; } }

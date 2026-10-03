@@ -36,6 +36,9 @@ EOF
   chmod 600 .env
 fi
 
+# Агент сервера (раздел «Сервер»): порты, диск, контейнеры, обновление проектов по кнопке.
+bash agent/install-agent.sh || echo "!! Агент сервера не установился — раздел «Сервер» будет недоступен"
+
 set -a; . ./.env; set +a
 mem_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
 OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}

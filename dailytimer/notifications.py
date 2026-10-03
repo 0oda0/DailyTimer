@@ -20,7 +20,8 @@ log = logging.getLogger(__name__)
 SOURCE_NAMES = {
     "github": "GitHub", "gmail": "Gmail", "telegram": "Telegram", "schedule": "расписание",
     "portal": "личный кабинет вуза", "subscriptions": "подписки", "weather": "погода",
-    "feeds": "новости", "codeforces": "Codeforces",
+    "feeds": "новости", "codeforces": "Codeforces", "server": "сервер (агент)",
+    "server_projects": "проекты на сервере",
 }
 WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 
@@ -111,6 +112,57 @@ def subscription_alerts(new: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
+def server_changes(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
+    """Новые/закрытые публичные порты и упавшие контейнеры."""
+    lines = []
+    old_ports = {(p["proto"], p["port"]): p for p in old.get("ports") or [] if p.get("public")}
+    new_ports = {(p["proto"], p["port"]): p for p in new.get("ports") or [] if p.get("public")}
+    for key in sorted(set(new_ports) - set(old_ports)):
+        p = new_ports[key]
+        who = p.get("container") or p.get("process") or "неизвестный процесс"
+        lines.append(f"🔓 Открылся публичный порт {p['port']}/{p['proto']} — {who}")
+    for key in sorted(set(old_ports) - set(new_ports)):
+        p = old_ports[key]
+        lines.append(f"🔒 Закрылся порт {p['port']}/{p['proto']} ({p.get('container') or p.get('process') or '?'})")
+    old_state = {c["name"]: c["state"] for c in old.get("containers") or []}
+    for c in new.get("containers") or []:
+        was = old_state.get(c["name"])
+        if was == "running" and c["state"] != "running":
+            lines.append(f"🛑 Контейнер {c['name']} остановился: {c['status']}")
+        elif was and was != "running" and c["state"] == "running":
+            lines.append(f"▶️ Контейнер {c['name']} снова работает")
+    return lines
+
+
+def disk_alerts(status: dict[str, Any], threshold: int, today: date) -> list[tuple[str, str]]:
+    out = []
+    for disk in status.get("disks") or []:
+        if disk["percent"] >= threshold:
+            free_gb = disk["free"] / 1024 ** 3
+            out.append((f"disk:{disk['mount']}:{today.isoformat()}",
+                        f"💾 Диск {disk['mount']} заполнен на {disk['percent']}% — свободно {free_gb:.1f} ГБ"))
+    return out
+
+
+def project_changes(old: list[dict[str, Any]], new: list[dict[str, Any]]) -> list[str]:
+    lines = []
+    before = {p["path"]: p for p in old}
+    for project in new:
+        was = before.get(project["path"])
+        if was is None:
+            continue
+        if (project.get("behind") or 0) > 0 and not (was.get("behind") or 0):
+            upstream = project.get("upstream") or {}
+            lines.append(f"⬆️ Для {project['name']} есть обновление ({project['behind']} коммит.): "
+                         f"{upstream.get('message', '')}\nОбновить можно в разделе «Сервер».")
+        ci, old_ci = project.get("ci") or {}, was.get("ci") or {}
+        if ci.get("conclusion") == "failure" and ci.get("id") != old_ci.get("id"):
+            lines.append(f"❌ CI упал в {project['github']} ({ci.get('name')}, {ci.get('sha')})\n{ci.get('url')}")
+        elif ci.get("conclusion") == "success" and old_ci.get("conclusion") == "failure":
+            lines.append(f"✅ CI в {project['github']} снова зелёный")
+    return lines
+
+
 def health_changes(before: dict[str, dict[str, Any]], errors: dict[str, str | None]) -> list[str]:
     lines = []
     for source, error in errors.items():
@@ -152,6 +204,18 @@ def after_sync(storage: Storage, settings: dict[str, Any], before: dict[str, dic
         for key, text in subscription_alerts(after["subscriptions"]["data"] or {}):
             if storage.first_time(f"notify:{key}"):
                 blocks.append(text)
+
+    if settings.get("notify_server"):
+        if had("server") and not errors.get("server"):
+            blocks += server_changes(before["server"]["data"] or {}, after["server"]["data"] or {})
+        if not errors.get("server") and after["server"]["data"]:
+            threshold = int(settings.get("server_disk_alert") or 90)
+            for key, text in disk_alerts(after["server"]["data"], threshold, today):
+                if storage.first_time(f"notify:{key}"):
+                    blocks.append(text)
+        if had("server_projects") and not errors.get("server_projects"):
+            blocks += project_changes((before["server_projects"]["data"] or {}).get("projects", []),
+                                      (after["server_projects"]["data"] or {}).get("projects", []))
 
     if settings.get("notify_errors"):
         blocks += health_changes(before, errors)

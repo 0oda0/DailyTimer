@@ -29,6 +29,7 @@ from ..tasks import Tasks, timeline
 from ..sorter import CATEGORIES
 from ..storage import DEFAULT_SETTINGS, SECRET_FIELDS, Storage
 from .planner_routes import register as register_planner
+from .server_routes import register as register_server
 from .sections import SECTIONS, section_status
 
 log = logging.getLogger(__name__)
@@ -321,6 +322,7 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         return {"data": sync.collect(storage), "plan": storage.get_plan(today.isoformat())}
 
     register_planner(app, storage, templates, auth, render_markdown)
+    register_server(app, storage, templates, auth)
 
     @app.get("/healthz")
     def health() -> dict[str, str]:

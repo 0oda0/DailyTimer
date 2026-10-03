@@ -39,6 +39,11 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "about": "Локальная модель на сервере, без ключей",
         "fields": ["ai_mode", "ai_local_model", "ai_custom_url", "ai_custom_model", "ai_api_key", "ai_local_url"],
     },
+    "server": {
+        "icon": "🖥", "title": "Сервер (VPS)",
+        "about": "Агент на сервере: диск, порты, контейнеры, обновление проектов",
+        "fields": ["server_agent_url", "server_agent_token", "server_disk_alert", "server_check_hours", "notify_server"],
+    },
     "other": {
         "icon": "⚙️", "title": "Режим дня и прочее",
         "about": "Подъём, отбой, время плана, погода, другие календари, новости",
@@ -84,6 +89,9 @@ def section_status(key: str, s: dict[str, Any], snaps: dict[str, dict[str, Any]]
     if key == "ai":
         mode = {"auto": "локальная + облако", "local": "локальная", "cloud": "облако", "off": "выключен"}
         return ("off" if s.get("ai_mode") == "off" else "ok"), mode.get(s.get("ai_mode") or "auto", "")
+    if key == "server":
+        configured = s.get("server_agent_token") or __import__("os").environ.get("VPS_AGENT_TOKEN")
+        return snap_state("server", "агент подключён") if configured else ("off", "агент не подключён")
     extras = [name for name, field in (("погода", "weather_city"), ("календари", "calendars_extra"),
                                        ("новости", "rss_feeds")) if s.get(field)]
     return "ok", (", ".join(extras) if extras else "режим дня")

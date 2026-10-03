@@ -11,11 +11,12 @@ from zoneinfo import ZoneInfo
 
 from . import notifications, planner, sorter
 from .ai import AIClient, AIError
-from .connectors import feeds, github, gmail, mtuci, portal, schedule, subscriptions, telegram, tg_account
+from .connectors import feeds, github, gmail, mtuci, portal, schedule, subscriptions, telegram, tg_account, vps
 from .storage import Storage
 
 log = logging.getLogger(__name__)
-SOURCES = ("github", "gmail", "telegram", "schedule", "portal", "subscriptions", "weather", "feeds", "codeforces")
+SOURCES = ("github", "gmail", "telegram", "schedule", "portal", "subscriptions", "weather", "feeds", "codeforces",
+           "server", "server_projects")
 _sync_lock = threading.Lock()
 
 
@@ -195,6 +196,17 @@ def fetch_portal(settings: dict[str, Any], today, ai: AIClient | None, state: st
     return portal.fetch(settings, today, ai, state)
 
 
+# ------------------------------------------------------------------ сервер
+
+def refresh_projects(storage: Storage, settings: dict[str, Any], agent: "vps.Agent", fetch: bool) -> None:
+    projects = agent.projects(fetch=fetch)
+    for project in projects:
+        if project.get("github"):
+            project.update(vps.github_status(project["github"], project.get("branch") or "",
+                                             settings.get("github_token", "")))
+    storage.save_snapshot("server_projects", {"projects": projects})
+
+
 # ------------------------------------------------------------------ всё вместе
 
 def sync_all(storage: Storage, force: bool = False) -> dict[str, str | None]:
@@ -264,6 +276,11 @@ def sync_all(storage: Storage, force: bool = False) -> dict[str, str | None]:
         rss = [u.strip() for u in (settings.get("rss_feeds") or "").splitlines() if u.strip()]
         if rss and (force or is_stale(storage, "feeds", 1)):
             run("feeds", lambda: storage.save_snapshot("feeds", {"feeds": feeds.feeds(rss)}))
+        agent = vps.Agent.from_settings(settings)
+        if agent:
+            run("server", lambda: storage.save_snapshot("server", agent.status()))
+            if force or is_stale(storage, "server_projects", float(settings.get("server_check_hours") or 1)):
+                run("server_projects", lambda: refresh_projects(storage, settings, agent, fetch=True))
         if settings.get("codeforces") and (force or is_stale(storage, "codeforces", 6)):
             run("codeforces", lambda: storage.save_snapshot("codeforces", {"contests": feeds.codeforces_contests()}))
         try:

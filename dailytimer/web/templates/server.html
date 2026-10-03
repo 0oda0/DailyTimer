@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% macro meter(percent) -%}
+  <div class="meter {% if percent >= 90 %}bad{% elif percent >= 75 %}warn{% endif %}"><div style="width: {{ [percent, 100]|min }}%"></div></div>
+{%- endmacro %}
+{% block head %}{% if checking or request.query_params.get('checking') %}<meta http-equiv="refresh" content="6;url=/server">{% endif %}{% endblock %}
+{% block content %}
+<div class="actions">
+  <h1>🖥 Сервер</h1>
+  {% if status %}<span class="muted">{{ status.hostname }} · {{ status.os }} · работает {{ status.uptime|uptime }}</span>{% endif %}
+</div>
+
+{% if not configured %}
+  <div class="card notice">
+    Агент сервера не подключён. Он ставится автоматически командой <code>bash install.sh</code> на VPS
+    (или <code>bash agent/install-agent.sh</code>) — токен сам попадает в настройки.
+    Если ставил вручную — укажи адрес и токен в <a href="/settings/server">Подключения → Сервер</a>.
+  </div>
+{% endif %}
+{% if error %}<div class="card notice err">{{ error }}{% if status %} — показаны последние сохранённые данные{% endif %}</div>{% endif %}
+
+{% if status %}
+<div class="stats-row">
+  <div class="card stat"><div class="muted small">Процессор · {{ status.cpus }} ядер</div><b>{{ status.cpu_percent }}%</b>
+    {{ meter(status.cpu_percent) }}<div class="muted small">нагрузка {{ status.load|join(' / ') }}</div></div>
+  {% set mem = status.memory %}{% set mem_pct = (mem.used / mem.total * 100)|round(1) if mem.total else 0 %}
+  <div class="card stat"><div class="muted small">Память</div><b>{{ mem.used|bytes }} / {{ mem.total|bytes }}</b>
+    {{ meter(mem_pct) }}<div class="muted small">{% if mem.swap_total %}swap {{ mem.swap_used|bytes }} / {{ mem.swap_total|bytes }}{% else %}без swap{% endif %}</div></div>
+  {% for d in status.disks %}
+  <div class="card stat"><div class="muted small">Диск {{ d.mount }}</div><b>{{ d.used|bytes }} / {{ d.total|bytes }}</b>
+    {{ meter(d.percent) }}<div class="muted small">{{ d.percent }}% · свободно {{ d.free|bytes }}</div></div>
+  {% endfor %}
+  <div class="card stat"><div class="muted small">Сеть с запуска</div><b>↓ {{ status.network.rx|bytes }}</b>
+    <div class="muted small">↑ {{ status.network.tx|bytes }}</div></div>
+</div>
+{% endif %}
+
+<section class="card">
+  <div class="actions">
+    <h2>📦 Проекты (git) {% if projects_at %}<span class="badge ok">проверено {{ projects_at[11:16] }} UTC</span>{% endif %}</h2>
+    {% if configured %}
+    <form method="post" action="/server/check"><button {% if checking %}disabled{% endif %}>{{ 'Проверяю…' if checking or request.query_params.get('checking') else '🔄 Проверить обновления' }}</button></form>
+    {% set outdated = projects | selectattr('behind') | list %}
+    {% if outdated %}<button class="primary" id="update-all" data-paths="{{ outdated|map(attribute='path')|join('|') }}">⬆️ Обновить всё ({{ outdated|length }})</button>{% endif %}
+    {% endif %}
+  </div>
+  {% if projects_error %}<p class="err-text small">{{ projects_error }}</p>{% endif %}
+  {% for p in projects %}
+    <div class="project">
+      <div class="project-main">
+        <div><b>{{ p.name }}</b> <span class="chip">{{ p.branch }}</span>
+          {% if p.behind %}<span class="chip red">⬆️ отстаёт на {{ p.behind }}</span>{% elif p.behind == 0 %}<span class="chip okc">актуально</span>{% endif %}
+          {% if p.ahead %}<span class="chip">впереди на {{ p.ahead }}</span>{% endif %}
+          {% if p.dirty %}<span class="chip warnc" title="Есть незакоммиченные изменения — git pull может не пройти">изменения на сервере</span>{% endif %}
+          {% if p.ci %}<a class="chip {{ 'okc' if p.ci.conclusion == 'success' else 'red' if p.ci.conclusion == 'failure' else '' }}" href="{{ p.ci.url }}" target="_blank">CI: {{ p.ci.conclusion or p.ci.status }}</a>{% endif %}
+          {% if p.open_prs %}<a class="chip" href="https://github.com/{{ p.github }}/pulls" target="_blank">PR: {{ p.open_prs }}</a>{% endif %}
+        </div>
+        <div class="muted small">{{ p.path }}{% if p.github %} · <a href="https://github.com/{{ p.github }}" target="_blank">github.com/{{ p.github }}</a>{% endif %}</div>
+        {% if p.commit %}<div class="small">сейчас: <code>{{ p.commit.hash }}</code> {{ p.commit.message }} <span class="muted">{{ p.commit.date[:16]|replace('T', ' ') }}</span></div>{% endif %}
+        {% if p.behind and p.upstream %}<div class="small">на GitHub: <code>{{ p.upstream.hash }}</code> {{ p.upstream.message }}</div>{% endif %}
+        {% if p.fetch_error %}<div class="err-text small">git fetch: {{ p.fetch_error }}</div>{% endif %}
+        {% for c in p.containers %}<span class="chip {{ 'okc' if c.state == 'running' else 'red' }}">🐳 {{ c.name }}: {{ c.state }}</span> {% endfor %}
+      </div>
+      <div class="project-actions">
+        <button class="{{ 'primary' if p.behind else '' }} do-update" data-path="{{ p.path }}" title="{{ p.update_method }}">⬆️ Обновить</button>
+        <div class="muted small">{{ p.update_method }}</div>
+      </div>
+    </div>
+  {% else %}
+    <p class="muted small">{{ 'Проекты ещё не проверялись — нажми «Проверить обновления».' if configured else 'Нет данных.' }}</p>
+  {% endfor %}
+</section>
+
+<div id="job" class="card job" hidden>
+  <div class="actions"><h2 id="job-title">Задание</h2><span id="job-status" class="badge"></span><button id="job-close" class="ghost">✕</button></div>
+  <pre id="job-log"></pre>
+</div>
+
+{% if status %}
+<section class="card">
+  <h2>🐳 Контейнеры ({{ status.containers|length }})</h2>
+  <table class="services">
+    {% for c in status.containers %}
+      <tr>
+        <td><span class="dot-state {{ 'on' if c.state == 'running' else 'off' }}"></span>{{ c.name }}</td>
+        <td class="muted small">{{ c.image }}<br>{{ c.status }}</td>
+        <td class="small">{{ c.cpu }}<br>{{ c.mem }}</td>
+        <td><button class="small do-restart" data-name="{{ c.name }}">↻ Перезапустить</button></td>
+      </tr>
+    {% else %}<tr><td class="muted">Docker-контейнеров нет</td></tr>{% endfor %}
+  </table>
+</section>
+
+<section class="card">
+  <h2>🔌 Порты ({{ status.ports|length }}) <span class="muted small">открытые наружу — красным</span></h2>
+  <table class="services ports">
+    <tr class="muted small"><td>Порт</td><td>Слушает</td><td>Кто</td></tr>
+    {% for p in status.ports %}
+      <tr class="{{ 'public' if p.public else '' }}">
+        <td><b>{{ p.port }}</b>/{{ p.proto }}</td>
+        <td class="small">{{ p.addresses|join(', ') }} {% if p.public %}<span class="chip red">наружу</span>{% else %}<span class="chip">локально</span>{% endif %}</td>
+        <td class="small">{% if p.container %}🐳 {{ p.container }}{% elif p.process %}{{ p.process }}{% if p.pid %} <span class="muted">pid {{ p.pid }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const box = document.getElementById('job'), log = document.getElementById('job-log');
+  const title = document.getElementById('job-title'), badge = document.getElementById('job-status');
+  document.getElementById('job-close').onclick = () => { box.hidden = true; };
+  async function start(body, label) {
+    box.hidden = false; title.textContent = label; badge.textContent = 'запуск…'; badge.className = 'badge'; log.textContent = '';
+    box.scrollIntoView({behavior: 'smooth'});
+    const r = await fetch('/api/server/update', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const data = await r.json();
+    if (!r.ok) { badge.textContent = 'ошибка'; badge.className = 'badge err'; log.textContent = data.error; return 'error'; }
+    return poll(data.job);
+  }
+  function poll(id) {
+    return new Promise(resolve => {
+      const t = setInterval(async () => {
+        let job;
+        try { job = await (await fetch('/api/server/jobs/' + id)).json(); } catch (e) { badge.textContent = 'перезапуск…'; return; }
+        log.textContent = job.log || ''; log.scrollTop = log.scrollHeight;
+        badge.textContent = {running: 'выполняется', ok: 'готово ✓', error: 'ошибка', unknown: 'нет связи…'}[job.status] || job.status;
+        badge.className = 'badge ' + (job.status === 'ok' ? 'ok' : job.status === 'error' ? 'err' : '');
+        if (job.status === 'ok' || job.status === 'error') { clearInterval(t); resolve(job.status); }
+      }, 1500);
+    });
+  }
+  document.querySelectorAll('.do-update').forEach(b => b.onclick = async () => {
+    if (!confirm('Обновить ' + b.dataset.path + '?')) return;
+    const st = await start({path: b.dataset.path}, 'Обновление ' + b.dataset.path.split('/').pop());
+    if (st === 'ok') setTimeout(() => location.reload(), 2500);
+  });
+  document.querySelectorAll('.do-restart').forEach(b => b.onclick = () => {
+    if (confirm('Перезапустить контейнер ' + b.dataset.name + '?')) start({container: b.dataset.name}, 'Перезапуск ' + b.dataset.name);
+  });
+  const all = document.getElementById('update-all');
+  if (all) all.onclick = async () => {
+    if (!confirm('Обновить все отстающие проекты?')) return;
+    for (const path of all.dataset.paths.split('|')) await start({path}, 'Обновление ' + path.split('/').pop());
+    setTimeout(() => location.reload(), 2500);
+  };
+})();
+</script>
+{% endblock %}
