@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import threading
+import time
 from typing import Any
 
 import httpx
@@ -47,6 +48,7 @@ class OllamaBackend(Backend):
     """Нативный API Ollama: умеет format=json и большой контекст."""
 
     _pull_lock = threading.Lock()
+    _last_failed_pull = 0.0  # после неудачи не пытаемся снова 10 минут
 
     def __init__(self, url: str, model: str, timeout: float = 600):
         self.url = url.rstrip("/")
@@ -64,6 +66,8 @@ class OllamaBackend(Backend):
 
     def ensure_model(self) -> bool:
         """Скачивает модель, если её ещё нет. Вызывается в фоне при старте."""
+        if time.monotonic() - OllamaBackend._last_failed_pull < 600:
+            return False
         if not self._pull_lock.acquire(blocking=False):
             return False  # уже качается в другом потоке — не дублируем
         try:
@@ -77,6 +81,7 @@ class OllamaBackend(Backend):
                 resp.raise_for_status()
             except httpx.HTTPError as exc:
                 log.warning("Не удалось скачать модель %s: %s", self.model, exc)
+                OllamaBackend._last_failed_pull = time.monotonic()
                 return False
             return self.available()
         finally:
