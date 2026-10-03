@@ -47,8 +47,11 @@ def test_github_receipts_subscriptions_health():
 
 def test_version_message():
     assert notifications.version_message(__version__) is None
-    msg = notifications.version_message("0.3.0")
-    assert f"версии {__version__}" in msg and "0.4.0" in msg and "0.2.0" not in msg
+    from dailytimer.changelog import CHANGES
+    newest, previous, older = CHANGES[0][0], CHANGES[1][0], CHANGES[2][0]
+    msg = notifications.version_message(older)
+    assert f"версии {__version__}" in msg and f"в {newest}:" in msg and f"в {previous}:" in msg
+    assert f"в {older}:" not in msg
     assert "0.4.0" not in notifications.version_message(None)  # первая установка — только текущая
 
 
