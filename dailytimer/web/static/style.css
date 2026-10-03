@@ -223,3 +223,13 @@ code { font-size: 12px; background: var(--line); padding: 1px 5px; border-radius
 .cleanup-kind:last-of-type { border-bottom: 0; }
 button.danger-fill { background: var(--err); border-color: var(--err); color: #fff; }
 button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---- расписание ---- */
+.schedule { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.schedule .card { margin: 0; }
+.schedule .day.today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.schedule .day.empty { opacity: .6; }
+.week-sep { grid-column: 1 / -1; color: var(--muted); font-size: 13px; margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.lesson { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.lesson:last-child { border-bottom: 0; }
+.lesson-time { font-variant-numeric: tabular-nums; min-width: 48px; font-weight: 600; }

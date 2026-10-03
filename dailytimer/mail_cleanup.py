@@ -147,3 +147,100 @@ def purge(storage: Storage, settings: dict[str, Any], kinds: list[str], ai: AICl
 def selected_kinds(settings: dict[str, Any]) -> list[str]:
     raw = settings.get("gmail_purge_kinds") or ",".join(DEFAULT_KINDS)
     return [k for k in raw.split(",") if k in KINDS]
+
+
+# ------------------------------------------------------------------ полный разбор всего ящика
+
+RECEIPTS_QUERY = ('in:inbox -is:starred (category:purchases OR {чек "кассовый чек" receipt invoice квитанция '
+                  '"ваш заказ" "order confirmation" "подтверждение заказа" "оплата прошла" "payment received"})')
+LOW_VALUE_QUERY = "in:inbox -is:starred older_than:3d (category:updates OR category:social OR category:forums)"
+PRIMARY_QUERY = "in:inbox -is:starred older_than:3d"
+TRIAGE_LIMIT = 3000  # писем «Входящих» за один проход; остальное — в следующий раз
+
+
+def triage(storage: Storage, settings: dict[str, Any], ai: AIClient | None,
+           notify: Callable[[str], Any] | None = None) -> dict[str, Any]:
+    """Полный разбор: удалить мусор, убрать чеки и оповещения, разобрать всё, что осталось во «Входящих»."""
+    if not _lock.acquire(blocking=False):
+        return {"error": "Разбор почты уже идёт"}
+    result: dict[str, Any] = {}
+    kept: list[dict[str, Any]] = []
+    try:
+        _save(storage, status="running", started_at=datetime.now().isoformat(timespec="seconds"),
+              progress="подключаюсь к Gmail…", result={}, error="")
+        with gmail.GmailClient(settings["gmail_email"], settings["gmail_app_password"]) as client:
+            # 1. Мусор за всё время — в корзину.
+            for kind in selected_kinds(settings):
+                _save(storage, progress=f"удаляю: {KINDS[kind]['title'].lower()}…", result=result)
+                if kind == "spam":
+                    spam = _clean_spam(client, storage, ai)
+                    result["spam"], result["rescued"] = spam["deleted"], spam["rescued"]
+                else:
+                    uids = client.search_all(KINDS[kind]["query"])
+                    result[kind] = client.trash(uids) if uids else 0
+
+            # 2. Покупки и чеки — в ярлык DT/Receipts, из «Входящих» убрать.
+            _save(storage, progress="собираю чеки и покупки…", result=result)
+            uids = client.search_all(RECEIPTS_QUERY)
+            result["receipts"] = client.bulk(uids, label="DT/Receipts", archive=True, read=True) if uids else 0
+
+            # 3. Оповещения, соцсети, форумы старше 3 дней — в архив и прочитанными.
+            _save(storage, progress="убираю оповещения и уведомления…", result=result)
+            uids = client.search_all(LOW_VALUE_QUERY)
+            result["archived"] = client.bulk(uids, label="DT/Other", archive=True, read=True) if uids else 0
+
+            # 4. Всё остальное во «Входящих» — разбираем по отправителю и теме.
+            uids = client.search_all(PRIMARY_QUERY)[-TRIAGE_LIMIT:]
+            result["left_in_inbox_before"] = len(uids)
+            _save(storage, progress=f"читаю «Входящие»: {len(uids)} писем…", result=result)
+            mails = client.headers_batch(uids)
+            verdicts: dict[str, dict[str, Any]] = {}
+            for start in range(0, len(mails), 40):
+                chunk = mails[start : start + 40]
+                verdicts.update(sorter.analyze(chunk, ai, batch=20))
+                _save(storage, progress=f"разбираю «Входящие»: {min(start + 40, len(mails))} из {len(mails)}…",
+                      result=result)
+            buckets: dict[str, list[str]] = {"trash": [], "receipts": [], "archive": []}
+            for mail in mails:
+                verdict = verdicts.get(mail["uid"]) or sorter.rule_analysis(mail)
+                storage.save_mail_analysis(mail["uid"], {**verdict, "actions": ["разбор ящика"]})
+                category = verdict["category"]
+                if verdict["important"] or verdict["needs_reply"] or category in {"personal", "study", "security", "important", "dev"}:
+                    kept.append({**mail, **verdict})
+                elif category == "promo":
+                    buckets["trash"].append(mail["uid"])
+                elif category == "receipts":
+                    buckets["receipts"].append(mail["uid"])
+                else:
+                    buckets["archive"].append(mail["uid"])
+            if buckets["trash"]:
+                result["promo"] = result.get("promo", 0) + client.trash(buckets["trash"])
+            if buckets["receipts"]:
+                result["receipts"] += client.bulk(buckets["receipts"], label="DT/Receipts", archive=True, read=True)
+            if buckets["archive"]:
+                result["archived"] += client.bulk(buckets["archive"], archive=True, read=True)
+            result["kept"] = len(kept)
+
+            if settings.get("gmail_purge_permanent"):
+                client.purge_trashed()
+        deleted = sum(result.get(k, 0) for k in KINDS)
+        _save(storage, status="done", result=result, total=deleted, progress="",
+              finished_at=datetime.now().isoformat(timespec="seconds"),
+              kept=[{"from": m["from"], "subject": m["subject"], "needs_reply": m.get("needs_reply")}
+                    for m in kept[:30]])
+        if notify:
+            lines = [f"📥 Разобрал всю почту:",
+                     f"🗑 удалено (реклама, промо, спам): {deleted}",
+                     f"🧾 чеки и покупки → DT/Receipts: {result.get('receipts', 0)}",
+                     f"📦 оповещения и рассылки → в архив: {result.get('archived', 0)}",
+                     f"📌 оставлено во «Входящих» как личное и важное: {len(kept)}"]
+            if result.get("rescued"):
+                lines.append(f"🛟 из спама возвращено: {result['rescued']}")
+            notify("\n".join(lines))
+        return result
+    except Exception as exc:
+        log.exception("Разбор почты упал")
+        _save(storage, status="error", error=f"{type(exc).__name__}: {exc}", result=result, progress="")
+        return {"error": str(exc), **result}
+    finally:
+        _lock.release()

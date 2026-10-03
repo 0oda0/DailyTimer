@@ -115,6 +115,40 @@ def register(app: FastAPI, storage: Storage, templates: Jinja2Templates, auth: C
         """Подсказка под полем быстрого ввода: что распознано."""
         return parse_quick(text, today()).as_dict()
 
+    # ------------------------------------------------------------ расписание
+
+    @app.get("/schedule", response_class=HTMLResponse, dependencies=guard)
+    def schedule_page(request: Request) -> Any:
+        day = today()
+        snap = storage.get_snapshot("schedule")
+        portal = storage.get_snapshot("portal")
+        names = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+        by_day: dict[str, list[dict[str, Any]]] = {}
+        for lesson in (snap["data"] or {}).get("lessons", []):
+            if lesson["start"][:10] >= day.isoformat():
+                by_day.setdefault(lesson["start"][:10], []).append(lesson)
+        days = []
+        for offset in range(14):
+            current = day + timedelta(days=offset)
+            iso = current.isoformat()
+            days.append({"iso": iso, "date": current.strftime("%d.%m"), "name": names[current.weekday()],
+                         "today": offset == 0, "tomorrow": offset == 1, "lessons": by_day.get(iso, []),
+                         "week_start": current.weekday() == 0 and offset > 0})
+        settings = storage.get_settings()
+        return templates.TemplateResponse(request, "schedule.html", {
+            "days": days, "updated_at": snap["updated_at"], "error": snap["error"],
+            "portal": portal["data"] or {}, "portal_error": portal["error"], "portal_at": portal["updated_at"],
+            "configured": bool(settings.get("schedule_login") or settings.get("schedule_ics_url")
+                               or settings.get("schedule_manual")),
+            "refreshing": sync.schedule_refreshing() or "refreshing" in request.query_params,
+            "total": sum(len(d["lessons"]) for d in days),
+        })
+
+    @app.post("/schedule/refresh", dependencies=guard)
+    def schedule_refresh() -> Any:
+        threading.Thread(target=lambda: sync.refresh_schedule(storage), daemon=True).start()
+        return RedirectResponse("/schedule?refreshing=1", status_code=303)
+
     # ------------------------------------------------------------ чат
 
     @app.get("/chat", response_class=HTMLResponse, dependencies=guard)

@@ -16,7 +16,7 @@
     <a class="brand" href="/">⏱ DailyTimer</a>
     <nav>
       {% set path = request.url.path %}
-      {% for href, label in [('/', 'Сегодня'), ('/tasks', 'Задачи'), ('/chat', 'Чат с ИИ'), ('/habits', 'Привычки'), ('/focus', 'Фокус'), ('/review', 'Итоги'), ('/server', 'Сервер'), ('/settings', 'Подключения')] %}
+      {% for href, label in [('/', 'Сегодня'), ('/schedule', 'Расписание'), ('/tasks', 'Задачи'), ('/chat', 'Чат с ИИ'), ('/habits', 'Привычки'), ('/focus', 'Фокус'), ('/review', 'Итоги'), ('/server', 'Сервер'), ('/settings', 'Подключения')] %}
         <a href="{{ href }}" class="{% if (href == '/' and path == '/') or (href != '/' and path.startswith(href)) %}active{% endif %}">{{ label }}</a>
       {% endfor %}
     </nav>

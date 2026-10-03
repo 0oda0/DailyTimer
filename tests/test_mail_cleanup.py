@@ -25,10 +25,36 @@ class FakeGmail:
 
     def search_all(self, query=""):
         box = self.boxes[self.current]
+        alive = [m for m in box if m["uid"] not in self.trashed]
         if not query:
-            return [m["uid"] for m in box if m["uid"] not in self.trashed]
-        tag = "promotions" if "category:promotions" in query else "dt-promo" if "dt-promo" in query else "?"
-        return [m["uid"] for m in box if tag in m["tags"] and "starred" not in m["tags"] and m["uid"] not in self.trashed]
+            return [m["uid"] for m in alive]
+        if "starred" in query:
+            alive = [m for m in alive if "starred" not in m["tags"]]
+        if "in:inbox" in query:
+            alive = [m for m in alive if m["uid"] not in FakeGmail.archived]
+        if "category:purchases" in query:
+            return [m["uid"] for m in alive if "purchases" in m["tags"]]
+        if "category:updates" in query:
+            return [m["uid"] for m in alive if m["tags"] & {"updates", "social"}]
+        if "category:promotions" in query:
+            return [m["uid"] for m in alive if "promotions" in m["tags"]]
+        if "dt-promo" in query:
+            return [m["uid"] for m in alive if "dt-promo" in m["tags"]]
+        if "in:inbox" in query:
+            return [m["uid"] for m in alive]
+        return []
+
+    def headers_batch(self, uids):
+        return [{"uid": m["uid"], "from": m.get("from", "x@y.ru"), "subject": m.get("subject", ""), "snippet": "",
+                 "list_unsubscribe": "unsub" in m["tags"], "in_inbox": True}
+                for m in self.boxes[self.current] if m["uid"] in uids]
+
+    def bulk(self, uids, label=None, archive=False, read=False):
+        if archive:
+            FakeGmail.archived.update(uids)
+        if label:
+            FakeGmail.labels.setdefault(label, set()).update(uids)
+        return len(uids)
 
     def headers(self, uids):
         return [{"uid": u, "from": "x", "subject": f"тема {u}"} for u in uids]
@@ -67,6 +93,7 @@ def setup(monkeypatch, tmp_path):
                   "snippet": "Экзамен по матанализу переносится"}],
     }
     FakeGmail.trashed, FakeGmail.inbox, FakeGmail.purged = [], [], []
+    FakeGmail.archived, FakeGmail.labels = set(), {}
     monkeypatch.setattr(gmail, "GmailClient", FakeGmail)
     store = Storage(tmp_path)
     store.save_settings({"gmail_email": "me@gmail.com", "gmail_app_password": "x", "ai_mode": "off"})
@@ -98,10 +125,35 @@ def test_permanent_and_first_purge(monkeypatch, tmp_path):
     store.save_settings({"gmail_purge_permanent": True})
     monkeypatch.setattr(sync, "notify", lambda *a: True)
     sync.maybe_first_purge(store)
-    assert FakeGmail.purged == [True] and len(FakeGmail.trashed) == 7
+    assert FakeGmail.purged == [True] and {"1", "2", "3", "4", "5", "7", "s1"} <= set(FakeGmail.trashed)
     FakeGmail.trashed.clear()
     sync.maybe_first_purge(store)  # второй раз автоматически не запускается
     assert FakeGmail.trashed == []
+
+
+def test_full_triage_like_real_inbox(monkeypatch, tmp_path):
+    store = setup(monkeypatch, tmp_path)
+    FakeGmail.boxes["all"] += [
+        {"uid": "p1", "tags": {"purchases"}, "subject": "Заказ доставлен"},
+        {"uid": "u1", "tags": {"updates"}, "subject": "Новое в приложении"},
+        {"uid": "u2", "tags": {"social"}, "subject": "Вас отметили"},
+        {"uid": "n1", "tags": {"unsub"}, "from": "news@habr.com", "subject": "Дайджест недели"},
+        {"uid": "a1", "tags": {"unsub"}, "from": "shop@x.ru", "subject": "Скидки 70% только сегодня"},
+        {"uid": "f1", "tags": set(), "from": "Аня <anya@gmail.com>", "subject": "Сможешь завтра созвониться?"},
+        {"uid": "k1", "tags": set(), "from": "Деканат <dekanat@mtuci.ru>", "subject": "Экзамен перенесён"},
+    ]
+    sent = []
+    result = mail_cleanup.triage(store, store.get_settings(), None, sent.append)
+    assert "error" not in result, result
+    assert {"1", "2", "3", "4", "5", "7", "a1", "s1"} <= set(FakeGmail.trashed)   # промо, реклама, спам
+    assert "6" not in FakeGmail.trashed                                           # со звёздочкой
+    assert {"p1"} <= FakeGmail.labels["DT/Receipts"] and "p1" in FakeGmail.archived
+    assert {"u1", "u2", "n1"} <= FakeGmail.archived                                # оповещения, рассылки
+    assert not {"f1", "k1", "8"} & (FakeGmail.archived | set(FakeGmail.trashed))   # личное и учёба остаются
+    snap = store.get_snapshot("mail_cleanup")["data"]
+    assert snap["status"] == "done" and snap["result"]["kept"] >= 2
+    assert any("Сможешь" in m["subject"] and m["needs_reply"] for m in snap["kept"])
+    assert sent and "Разобрал всю почту" in sent[0]
 
 
 def test_daily_promo_goes_to_trash(tmp_path):

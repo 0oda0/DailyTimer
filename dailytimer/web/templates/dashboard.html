@@ -70,6 +70,12 @@
 
   <section class="card wide attention">
     <h2>Почта: что требует внимания {{ status(snaps.gmail) }}</h2>
+    {% if not gmail_connected %}<p class="muted">Gmail не подключён — <a href="/settings/mail">подключить</a>.</p>{% endif %}
+    {% if snaps.gmail.error %}<p class="err-text small">Почта не обновляется: {{ snaps.gmail.error }}</p>{% endif %}
+    {% if cleanup.status == 'running' %}<p class="digest">📥 Идёт разбор всей почты: {{ cleanup.progress }}</p>
+    {% elif cleanup.status == 'error' %}<p class="err-text small">Разбор почты не удался: {{ cleanup.error }} — <a href="/settings/mail">подробнее</a></p>
+    {% elif cleanup.status == 'done' and cleanup.result %}<p class="muted small">📥 Последний разбор {{ (cleanup.finished_at or '')[:16]|replace('T', ' ') }}:
+      удалено {{ cleanup.total }}, чеков {{ cleanup.result.receipts or 0 }}, в архив {{ cleanup.result.archived or 0 }}{% if cleanup.result.kept is defined %}, оставлено важных {{ cleanup.result.kept }}{% endif %}</p>{% endif %}
     {% if digest %}<p class="digest">{{ digest }}</p>{% endif %}
     {% if replies %}<h3>✉️ Ждут ответа ({{ replies|length }})</h3>{% for m in replies[:10] %}{{ mail_row(m) }}{% endfor %}{% endif %}
     {% if important %}<h3>❗ Важное ({{ important|length }})</h3>{% for m in important[:10] %}{{ mail_row(m) }}{% endfor %}{% endif %}

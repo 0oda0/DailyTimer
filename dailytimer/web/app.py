@@ -114,7 +114,7 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
 
         def weekly_purge() -> None:
             if storage.get_settings().get("gmail_auto_purge"):
-                sync.run_purge(storage)
+                sync.run_triage(storage)
 
         scheduler.add_job(weekly_purge, CronTrigger(day_of_week="sun", hour=4, minute=10, timezone=tz),
                           id="mail_purge", replace_existing=True)
@@ -194,6 +194,8 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
                 "cleaned": sum(1 for m in mails if m.get("actions")),
                 "mail_groups": [(k, CATEGORIES[k]["title"], by_cat[k]) for k in CATEGORIES if k in by_cat],
                 "receipts": subs_data.get("receipts", []),
+                "cleanup": storage.get_snapshot("mail_cleanup")["data"] or {},
+                "gmail_connected": bool(settings.get("gmail_email") and settings.get("gmail_app_password")),
                 "timeline": timeline(task_store, today, lessons, settings.get("wake_time") or "08:00",
                                      settings.get("sleep_time") or "23:30"),
                 "task_views": task_store.views(today),
@@ -307,6 +309,14 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         storage.save_settings({"gmail_purge_kinds": ",".join(kinds)})
         in_background(lambda: sync.run_purge(storage, kinds))
         return back("mail", info="Уборка запущена — по окончании придёт сообщение в Telegram")
+
+    @app.post("/mail/triage", dependencies=[Depends(auth)])
+    def mail_triage() -> Any:
+        settings = storage.get_settings()
+        if not (settings.get("gmail_email") and settings.get("gmail_app_password")):
+            return back("mail", error="Сначала подключи Gmail")
+        in_background(lambda: sync.run_triage(storage))
+        return back("mail", info="Разбираю всю почту — прогресс виден здесь и на главной, итог придёт в Telegram")
 
     @app.post("/telegram/test", dependencies=[Depends(auth)])
     def telegram_test() -> Any:

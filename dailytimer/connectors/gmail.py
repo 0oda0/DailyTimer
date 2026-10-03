@@ -159,6 +159,43 @@ class GmailClient:
                             "date": msg.get("Date", "")})
         return out
 
+    def headers_batch(self, uids: list[str], batch: int = 200) -> list[dict[str, Any]]:
+        """Заголовки многих писем пачками (один запрос на 200 писем) — для разбора всего ящика."""
+        out: list[dict[str, Any]] = []
+        for start in range(0, len(uids), batch):
+            chunk = ",".join(uids[start : start + batch])
+            typ, data = self.imap.uid(
+                "FETCH", chunk, "(UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE LIST-UNSUBSCRIBE)])")
+            if typ != "OK" or not data:
+                continue
+            for item in data:
+                if not isinstance(item, tuple):
+                    continue
+                meta = item[0].decode(errors="replace")
+                uid = re.search(r"UID (\d+)", meta)
+                if not uid:
+                    continue
+                msg = email.message_from_bytes(item[1])
+                out.append({"uid": uid.group(1), "from": _decode(msg.get("From")),
+                            "subject": _decode(msg.get("Subject")) or "(без темы)", "date": msg.get("Date", ""),
+                            "snippet": "", "list_unsubscribe": bool(msg.get("List-Unsubscribe")), "in_inbox": True})
+        return out
+
+    def bulk(self, uids: list[str], label: str | None = None, archive: bool = False, read: bool = False,
+             batch: int = 500) -> int:
+        """Ярлык / архив / «прочитано» сразу для многих писем."""
+        if label:
+            self.ensure_label(label)
+        for start in range(0, len(uids), batch):
+            chunk = ",".join(uids[start : start + batch])
+            if label:
+                self.imap.uid("STORE", chunk, "+X-GM-LABELS", f'("{label}")')
+            if read:
+                self.imap.uid("STORE", chunk, "+FLAGS.SILENT", "(\\Seen)")
+            if archive:
+                self.imap.uid("STORE", chunk, "-X-GM-LABELS", "(\\Inbox)")
+        return len(uids)
+
     PURGE_LABEL = "DT/Purged"
 
     def trash(self, uids: list[str], batch: int = 500) -> int:

@@ -99,3 +99,32 @@ def test_ai_page_warns_when_model_too_big(tmp_path, monkeypatch):
     store.save_settings({"ai_local_model": "qwen2.5:1.5b"})
     page = TestClient(create_app(store, start_scheduler=False)).get("/settings/ai").text
     assert "ГБ памяти, а модели" not in page
+
+
+def test_schedule_page_and_refresh(tmp_path, monkeypatch):
+    import time
+
+    from dailytimer import sync
+
+    monkeypatch.delenv("DAILYTIMER_PASSWORD", raising=False)
+    store = Storage(tmp_path)
+    store.save_settings({"schedule_login": "a@edu.mtuci.ru", "schedule_password": "x",
+                         "schedule_portal_url": "https://lk.mtuci.ru/student/schedule"})
+    day = sync.today_for(store.get_settings()).isoformat()
+    calls = []
+
+    def fake_portal(settings, today, ai, state):
+        calls.append(1)
+        return {"group": "БВТ2401", "lessons": [{"title": "Матанализ (лекция)", "start": f"{day}T09:30:00",
+                                                 "end": f"{day}T11:05:00", "location": "А-101"}]}
+
+    monkeypatch.setattr(sync, "fetch_portal", fake_portal)
+    client = TestClient(create_app(store, start_scheduler=False))
+    assert "Пар нет" in client.get("/schedule").text
+    assert client.post("/schedule/refresh", follow_redirects=False).status_code == 303
+    for _ in range(50):
+        if store.get_snapshot("schedule")["data"]:
+            break
+        time.sleep(0.05)
+    page = client.get("/schedule").text
+    assert calls and "Матанализ (лекция)" in page and "А-101" in page and "БВТ2401" in page and "сегодня" in page

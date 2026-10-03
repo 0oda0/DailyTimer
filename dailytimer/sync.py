@@ -199,15 +199,61 @@ def run_purge(storage: Storage, kinds: list[str] | None = None) -> dict[str, Any
                               AIClient.from_settings(settings), lambda text: notify(storage, settings, text))
 
 
-def maybe_first_purge(storage: Storage) -> None:
-    """Первая уборка всего ящика — сразу после подключения почты (если автоуборка включена)."""
+def run_triage(storage: Storage) -> dict[str, Any]:
+    """Полный разбор всего ящика (мусор, чеки, оповещения, остальные «Входящие»)."""
+    from . import mail_cleanup
+
     settings = storage.get_settings()
-    if (settings.get("gmail_auto_purge") and settings.get("gmail_email") and settings.get("gmail_app_password")
-            and storage.get_snapshot("mail_cleanup")["data"] is None):
-        run_purge(storage)
+    if not (settings.get("gmail_email") and settings.get("gmail_app_password")):
+        return {"error": "Gmail не подключён"}
+    return mail_cleanup.triage(storage, settings, AIClient.from_settings(settings),
+                               lambda text: notify(storage, settings, text))
+
+
+def maybe_first_purge(storage: Storage) -> None:
+    """Первый полный разбор ящика — сразу после подключения почты (и один раз после обновления)."""
+    settings = storage.get_settings()
+    if not (settings.get("gmail_auto_purge") and settings.get("gmail_email") and settings.get("gmail_app_password")):
+        return
+    if storage.first_time("mail-triage-v1"):
+        run_triage(storage)
 
 
 # ------------------------------------------------------------------ расписание
+
+def build_schedule(storage: Storage, settings: dict[str, Any], today) -> None:
+    """Пары из кабинета вуза + ICS + ручная таблица → один снимок «schedule»."""
+    data = schedule.fetch(settings, today, days=14)
+    portal_lessons = (storage.get_snapshot("portal")["data"] or {}).get("lessons", [])
+    lessons = sorted(data["lessons"] + portal_lessons, key=lambda l: l["start"])
+    storage.save_snapshot("schedule", {"lessons": lessons}, error="; ".join(data["errors"]) or None)
+
+
+_schedule_lock = threading.Lock()
+
+
+def refresh_schedule(storage: Storage) -> None:
+    """Перечитать расписание прямо сейчас (кнопка «Обновить из ЛК»), не трогая почту и остальное."""
+    if not _schedule_lock.acquire(blocking=False):
+        return
+    try:
+        settings = storage.get_settings()
+        today = today_for(settings)
+        if settings.get("schedule_login") and (settings.get("schedule_portal_url") or settings.get("schedule_page_url")):
+            state = str(storage.data_dir / "portal_session.json")
+            try:
+                storage.save_snapshot("portal", fetch_portal(settings, today, AIClient.from_settings(settings), state))
+            except Exception as exc:  # noqa: BLE001 — ошибка видна на странице
+                log.warning("Расписание из кабинета: %s", exc)
+                storage.save_snapshot("portal", None, error=str(exc))
+        build_schedule(storage, settings, today)
+    finally:
+        _schedule_lock.release()
+
+
+def schedule_refreshing() -> bool:
+    return _schedule_lock.locked()
+
 
 def fetch_portal(settings: dict[str, Any], today, ai: AIClient | None, state: str) -> dict[str, Any]:
     """Для известных вузов — точный API, для остальных — универсальный разбор страницы."""
@@ -271,13 +317,7 @@ def sync_all(storage: Storage, force: bool = False) -> dict[str, str | None]:
                 state = str(storage.data_dir / "portal_session.json")
                 run("portal", lambda: storage.save_snapshot("portal", fetch_portal(settings, today, ai, state)))
 
-        def build_schedule() -> None:
-            data = schedule.fetch(settings, today, days=14)
-            portal_lessons = (storage.get_snapshot("portal")["data"] or {}).get("lessons", [])
-            lessons = sorted(data["lessons"] + portal_lessons, key=lambda l: l["start"])
-            storage.save_snapshot("schedule", {"lessons": lessons}, error="; ".join(data["errors"]) or None)
-
-        run("schedule", build_schedule)
+        run("schedule", lambda: build_schedule(storage, settings, today))
 
         sub_mails = None
         if settings.get("gmail_email") and settings.get("gmail_app_password"):

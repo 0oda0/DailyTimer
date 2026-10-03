@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block head %}{% if refreshing %}<meta http-equiv="refresh" content="6;url=/schedule">{% endif %}{% endblock %}
+{% block content %}
+<div class="actions">
+  <h1>🎓 Расписание</h1>
+  <span class="muted small">
+    {% if portal.group %}группа {{ portal.group }} · {% endif %}
+    {% if updated_at %}обновлено {{ updated_at[11:16] }} UTC{% endif %}
+  </span>
+  <form method="post" action="/schedule/refresh">
+    <button class="primary" {% if refreshing %}disabled{% endif %}>{{ 'Обновляю из ЛК…' if refreshing else '🔄 Обновить из ЛК' }}</button>
+  </form>
+</div>
+
+{% if not configured %}
+  <div class="card notice">Расписание не подключено. Укажи адрес личного кабинета, логин и пароль в
+    <a href="/settings/study">Подключения → Учёба</a>.</div>
+{% endif %}
+{% if portal_error %}<div class="card notice err">Личный кабинет: {{ portal_error }}
+  {% if portal.lessons %}<br><span class="small">Показано последнее успешно загруженное расписание.</span>{% endif %}</div>{% endif %}
+{% if error %}<div class="card notice err">{{ error }}</div>{% endif %}
+
+{% if configured and not total and not refreshing and not portal_error %}
+  <div class="card notice">На ближайшие 2 недели пар не найдено. Нажми «Обновить из ЛК»; если пусто — проверь адрес кабинета.</div>
+{% endif %}
+
+<div class="schedule">
+  {% for d in days %}
+    {% if d.week_start %}<div class="week-sep">Следующая неделя</div>{% endif %}
+    <section class="card day {% if d.today %}today{% endif %} {% if not d.lessons %}empty{% endif %}">
+      <h2>{{ d.name }} <span class="muted small">{{ d.date }}{% if d.today %} · сегодня{% elif d.tomorrow %} · завтра{% endif %}</span></h2>
+      {% for l in d.lessons %}
+        <div class="lesson">
+          <div class="lesson-time">{{ l.start[11:16] }}<br><span class="muted">{{ l.end[11:16] }}</span></div>
+          <div><b>{{ l.title }}</b>{% if l.location %}<div class="muted small">{{ l.location }}</div>{% endif %}</div>
+        </div>
+      {% else %}<p class="muted small">Пар нет</p>{% endfor %}
+    </section>
+  {% endfor %}
+</div>
+{% endblock %}

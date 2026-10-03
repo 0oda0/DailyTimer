@@ -76,6 +76,12 @@
       {% if cleanup.status == 'scanning' %}<p class="status">● ищу письма…</p>{% endif %}
       {% if cleanup.status == 'running' %}<p class="status">● идёт уборка: {{ cleanup.progress }}</p>{% endif %}
       {% if cleanup.status == 'error' %}<p class="status warn">● ошибка: {{ cleanup.error }}</p>{% endif %}
+      {% if cleanup.status == 'done' and cleanup.result and cleanup.result.kept is defined %}
+        <p class="status ok">● чеков и покупок убрано в DT/Receipts: {{ cleanup.result.receipts or 0 }} · оповещений и рассылок в архив: {{ cleanup.result.archived or 0 }} · оставлено во «Входящих»: {{ cleanup.result.kept }}</p>
+        {% if cleanup.kept %}<details class="small"><summary class="muted">что осталось во «Входящих» как важное</summary>
+          {% for m in cleanup.kept %}<div class="row small">{% if m.needs_reply %}✉️ {% endif %}{{ m.subject }} <span class="muted">— {{ m.from }}</span></div>{% endfor %}
+        </details>{% endif %}
+      {% endif %}
       {% if cleanup.status == 'done' and cleanup.result %}
         <p class="status ok">● последняя уборка {{ (cleanup.finished_at or '')[:16]|replace('T', ' ') }}: удалено {{ cleanup.total }}
           {%- for k, v in cleanup.result.items() if k in cleanup_kinds and v %} · {{ cleanup_kinds[k].title|lower }} {{ v }}{% endfor %}
@@ -97,6 +103,8 @@
           </div>
         {% endfor %}
         <div class="task-actions">
+          <button formaction="/mail/triage" class="primary" {% if busy %}disabled{% endif %}
+                  onclick="return confirm('Разобрать весь ящик: удалить мусор, убрать чеки и оповещения, разобрать «Входящие»?')">📥 Разобрать всю почту</button>
           <button formaction="/mail/cleanup/scan" {% if busy %}disabled{% endif %}>🔍 Найти и посчитать</button>
           <button class="primary danger-fill" {% if busy %}disabled{% endif %}
                   onclick="return confirm('Удалить отмеченные письма во всём ящике?')">🗑 Удалить отмеченное</button>
