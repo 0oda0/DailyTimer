@@ -21,7 +21,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import bot, notifications, sync
+from .. import bot, mail_cleanup, notifications, sync
 from ..ai import LOCAL_MODELS, AIClient
 from ..connectors import tg_account
 from ..life import Focus, Habits
@@ -110,6 +110,13 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         )
         scheduler.add_job(lambda: bot.send_reminders(storage), "interval", minutes=1, id="reminders",
                           replace_existing=True)
+
+        def weekly_purge() -> None:
+            if storage.get_settings().get("gmail_auto_purge"):
+                sync.run_purge(storage)
+
+        scheduler.add_job(weekly_purge, CronTrigger(day_of_week="sun", hour=4, minute=10, timezone=tz),
+                          id="mail_purge", replace_existing=True)
         e_hour, e_minute = (int(x) for x in (settings.get("evening_time") or "21:30").split(":"))
         scheduler.add_job(
             lambda: sync.notify(storage, storage.get_settings(), bot.evening_digest(storage)),
@@ -122,6 +129,7 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
             reschedule()
             scheduler.start()
             poller.start()
+            in_background(lambda: sync.maybe_first_purge(storage))
             in_background(lambda: notifications.announce_version(
                 storage, lambda text: sync.notify(storage, storage.get_settings(), text)))
             ai = AIClient.from_settings(storage.get_settings())
@@ -206,6 +214,7 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
             return
         reschedule()
         in_background(lambda: sync.sync_all(storage, force=True))
+        in_background(lambda: sync.maybe_first_purge(storage))
         ai = AIClient.from_settings(storage.get_settings())
         if ai and ai.local:
             in_background(ai.local.ensure_model)
@@ -232,6 +241,9 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
             request,
             "settings.html",
             {"s": masked_settings(), "raw_tg_pending": bool(storage.get_settings().get("tg_pending")),
+             "cleanup": storage.get_snapshot("mail_cleanup")["data"] or {}, "cleanup_kinds": mail_cleanup.KINDS,
+             "cleanup_selected": mail_cleanup.selected_kinds(storage.get_settings()),
+             "cleanup_running": mail_cleanup.running(),
              "models": LOCAL_MODELS, "saved": saved, "error": error, "info": info,
              "section": section, "sections": SECTIONS, "snaps": snaps,
              "status": section_status(section, storage.get_settings(), snaps)},
@@ -264,6 +276,33 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         storage.save_settings(updates)
         after_change()
         return back(section, saved="1")
+
+    @app.post("/mail/cleanup/scan", dependencies=[Depends(auth)])
+    def mail_cleanup_scan() -> Any:
+        settings = storage.get_settings()
+        if not (settings.get("gmail_email") and settings.get("gmail_app_password")):
+            return back("mail", error="Сначала подключи Gmail")
+
+        def work() -> None:
+            try:
+                storage.save_snapshot("mail_cleanup", {**(storage.get_snapshot("mail_cleanup")["data"] or {}),
+                                                       "status": "scanning"})
+                mail_cleanup.scan(storage, settings)
+            except Exception as exc:  # noqa: BLE001
+                storage.save_snapshot("mail_cleanup", {"status": "error", "error": str(exc)})
+
+        in_background(work)
+        return back("mail", info="Ищу промоакции, рекламу и спам во всём ящике…")
+
+    @app.post("/mail/cleanup/run", dependencies=[Depends(auth)])
+    async def mail_cleanup_run(request: Request) -> Any:
+        form = await request.form()
+        kinds = [k for k in form.getlist("kind") if k in mail_cleanup.KINDS]
+        if not kinds:
+            return back("mail", error="Отметь, что удалять")
+        storage.save_settings({"gmail_purge_kinds": ",".join(kinds)})
+        in_background(lambda: sync.run_purge(storage, kinds))
+        return back("mail", info="Уборка запущена — по окончании придёт сообщение в Telegram")
 
     @app.post("/telegram/test", dependencies=[Depends(auth)])
     def telegram_test() -> Any:

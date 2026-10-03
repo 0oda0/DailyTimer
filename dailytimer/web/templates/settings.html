@@ -56,11 +56,53 @@
       <label>Адрес <input name="gmail_email" type="email" value="{{ s.gmail_email }}" placeholder="you@gmail.com"></label>
       <label>Пароль приложения <input name="gmail_app_password" type="password" value="{{ s.gmail_app_password }}" placeholder="xxxx xxxx xxxx xxxx"></label>
       {{ check("gmail_apply_labels", "Раскладывать письма по ярлыкам DT/* в Gmail") }}
-      {{ check("gmail_cleanup", "Убирать рекламу, рассылки и неважное из «Входящих» (в архив, не удаляется)") }}
+      {{ check("gmail_trash_promo", "Сразу удалять новую рекламу") }}
+      {{ check("gmail_cleanup", "Убирать рассылки, соцсети и неважное из «Входящих» в архив") }}
       {{ check("gmail_receipts_archive", "Собирать все чеки и оплаты в ярлык DT/Receipts") }}
       {{ check("gmail_rescue_spam", "Проверять «Спам» и возвращать важные письма во «Входящие»") }}
+      {{ check("gmail_trash_spam", "Проверенный спам сразу удалять") }}
+      {{ check("gmail_auto_purge", "Генеральная уборка всего ящика: сразу после подключения и каждое воскресенье") }}
+      {{ check("gmail_purge_permanent", "Удалять навсегда, минуя «Корзину» (без возможности восстановить)") }}
       <button class="primary">Сохранить</button>
     </form>
+
+    {% set busy = cleanup_running or cleanup.status in ['scanning', 'running'] %}
+    {% if busy %}<meta http-equiv="refresh" content="5">{% endif %}
+    <div class="card settings">
+      <h2>🧹 Генеральная уборка всего ящика</h2>
+      <p class="muted">Удаляет за <b>всё время</b>, а не только свежие письма. Письма со звёздочкой, чеки, заказы, билеты,
+        коды и всё, что DailyTimer пометил важным, не трогаются. Спам сначала проверяется: важное возвращается во «Входящие».
+        {% if not s.gmail_purge_permanent %}Удалённое лежит в «Корзине» Gmail ещё 30 дней.{% endif %}</p>
+      {% if cleanup.status == 'scanning' %}<p class="status">● ищу письма…</p>{% endif %}
+      {% if cleanup.status == 'running' %}<p class="status">● идёт уборка: {{ cleanup.progress }}</p>{% endif %}
+      {% if cleanup.status == 'error' %}<p class="status warn">● ошибка: {{ cleanup.error }}</p>{% endif %}
+      {% if cleanup.status == 'done' and cleanup.result %}
+        <p class="status ok">● последняя уборка {{ (cleanup.finished_at or '')[:16]|replace('T', ' ') }}: удалено {{ cleanup.total }}
+          {%- for k, v in cleanup.result.items() if k in cleanup_kinds and v %} · {{ cleanup_kinds[k].title|lower }} {{ v }}{% endfor %}
+          {%- if cleanup.result.rescued %} · из спама спасено {{ cleanup.result.rescued }}{% endif %}</p>
+      {% endif %}
+      <form method="post" action="/mail/cleanup/run">
+        {% for key, meta in cleanup_kinds.items() %}
+          {% set found = (cleanup.scan or {}).get(key) %}
+          <div class="cleanup-kind">
+            <label class="check"><input type="checkbox" name="kind" value="{{ key }}" {% if key in cleanup_selected %}checked{% endif %}>
+              <b>{{ meta.title }}</b> <span class="muted small">— {{ meta.hint }}</span>
+              {% if found %}<span class="chip {{ 'red' if found.count else 'okc' }}">{{ found.count }} писем</span>{% endif %}
+            </label>
+            {% if found and found.samples %}
+              <details class="small"><summary class="muted">примеры</summary>
+                {% for m in found.samples %}<div class="row small">{{ m.subject or '(без темы)' }} <span class="muted">— {{ m.from }}</span></div>{% endfor %}
+              </details>
+            {% endif %}
+          </div>
+        {% endfor %}
+        <div class="task-actions">
+          <button formaction="/mail/cleanup/scan" {% if busy %}disabled{% endif %}>🔍 Найти и посчитать</button>
+          <button class="primary danger-fill" {% if busy %}disabled{% endif %}
+                  onclick="return confirm('Удалить отмеченные письма во всём ящике?')">🗑 Удалить отмеченное</button>
+        </div>
+      </form>
+    </div>
 
 {% elif section == "social" %}
     <div class="card settings">

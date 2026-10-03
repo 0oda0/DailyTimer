@@ -108,7 +108,8 @@ class GmailClient:
 
     def select(self, which: str) -> None:
         """which: all | spam | inbox. «Вся почта» — UID там стабильны при архивации."""
-        name = {"all": self.folders.get("\\All"), "spam": self.folders.get("\\Junk")}.get(which) or "INBOX"
+        name = {"all": self.folders.get("\\All"), "spam": self.folders.get("\\Junk"),
+                "trash": self.folders.get("\\Trash")}.get(which) or "INBOX"
         typ, data = self.imap.select(name)
         if typ != "OK":
             raise GmailError(f"Не удалось открыть папку {name}: {data}")
@@ -135,6 +136,60 @@ class GmailClient:
             raise GmailError(f"Поиск не удался: {data}")
         uids = data[0].decode().split() if data and data[0] else []
         return uids[-limit:]
+
+    def search_all(self, gmail_query: str = "") -> list[str]:
+        """Все UID по запросу (без ограничения) — для генеральной уборки."""
+        if not gmail_query:
+            typ, data = self.imap.uid("SEARCH", "ALL")
+        else:
+            self.imap.literal = gmail_query.encode("utf-8")
+            typ, data = self.imap.uid("SEARCH", "CHARSET", "UTF-8", "X-GM-RAW")
+        if typ != "OK":
+            raise GmailError(f"Поиск не удался: {data}")
+        return data[0].decode().split() if data and data[0] else []
+
+    def headers(self, uids: list[str]) -> list[dict[str, str]]:
+        """Только отправитель и тема — быстро, без тела письма."""
+        out = []
+        for uid in uids:
+            typ, data = self.imap.uid("FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+            if typ == "OK" and data and isinstance(data[0], tuple):
+                msg = email.message_from_bytes(data[0][1])
+                out.append({"uid": uid, "from": _decode(msg.get("From")), "subject": _decode(msg.get("Subject")),
+                            "date": msg.get("Date", "")})
+        return out
+
+    PURGE_LABEL = "DT/Purged"
+
+    def trash(self, uids: list[str], batch: int = 500) -> int:
+        """Перемещает письма в «Корзину» пачками (Gmail удалит их окончательно через 30 дней).
+        Каждое письмо получает ярлык DT/Purged — чтобы «удалить навсегда» трогало только наши."""
+        target = self.folders.get("\\Trash")
+        if not target:
+            raise GmailError("Не нашёл папку «Корзина» в Gmail")
+        self.ensure_label(self.PURGE_LABEL)
+        moved = 0
+        for start in range(0, len(uids), batch):
+            chunk = ",".join(uids[start : start + batch])
+            self.imap.uid("STORE", chunk, "+X-GM-LABELS", f'("{self.PURGE_LABEL}")')
+            typ, data = self.imap.uid("MOVE", chunk, target)
+            if typ != "OK":
+                raise GmailError(f"Не удалось переместить в корзину: {data}")
+            moved += len(uids[start : start + batch])
+        return moved
+
+    def purge_trashed(self) -> int:
+        """Окончательно удаляет из «Корзины» только письма, которые туда переложил DailyTimer."""
+        self.select("trash")
+        try:
+            uids = self.search_all("label:dt-purged")
+            for start in range(0, len(uids), 500):
+                chunk = ",".join(uids[start : start + 500])
+                self.imap.uid("STORE", chunk, "+FLAGS.SILENT", "(\\Deleted)")
+            self.imap.expunge()
+            return len(uids)
+        finally:
+            self.select("all")
 
     def search_since(self, days: int, limit: int = 40) -> list[str]:
         since = (date.today() - timedelta(days=days)).strftime("%d-%b-%Y")

@@ -53,7 +53,8 @@ def notify(storage: Storage, settings: dict[str, Any], text: str) -> bool:
 
 # ------------------------------------------------------------------ почта
 
-def _rescue_spam(client: gmail.GmailClient, storage: Storage, ai: AIClient | None) -> list[dict[str, Any]]:
+def _rescue_spam(client: gmail.GmailClient, storage: Storage, ai: AIClient | None,
+                 trash_rest: bool = False) -> list[dict[str, Any]]:
     if "\\Junk" not in client.folders:
         return []
     client.select("spam")
@@ -72,6 +73,10 @@ def _rescue_spam(client: gmail.GmailClient, storage: Storage, ai: AIClient | Non
                 if client.move_to_inbox(mail["uid"]):
                     rescued.append({**mail, **verdict, "rescued": True})
             storage.save_mail_analysis(f"spam:{mail['uid']}", {**verdict, "rescued": rescue})
+        if trash_rest:  # проверенный и не важный спам — сразу в корзину
+            junk = [m["uid"] for m in fresh if not sorter.should_rescue_from_spam(m, verdicts[m["uid"]])]
+            if junk:
+                client.trash(junk)
         return rescued
     finally:
         client.select("all")
@@ -93,6 +98,9 @@ def _apply_actions(client: gmail.GmailClient, mail: dict[str, Any], verdict: dic
             client.archive(uid)
             client.mark_read(uid)
             actions.append("в чеки")
+    elif category == "promo" and not keep and settings.get("gmail_trash_promo"):
+        client.trash([uid])
+        actions.append("удалено")
     elif category in sorter.JUNK and not keep and settings.get("gmail_cleanup") and mail.get("in_inbox"):
         client.archive(uid)
         client.mark_read(uid)
@@ -103,7 +111,8 @@ def _apply_actions(client: gmail.GmailClient, mail: dict[str, Any], verdict: dic
 def sync_gmail(storage: Storage, settings: dict[str, Any], ai: AIClient | None) -> list[dict[str, Any]] | None:
     """Возвращает письма-кандидаты в подписки (или None, если их не обновляли)."""
     with gmail.GmailClient(settings["gmail_email"], settings["gmail_app_password"]) as client:
-        rescued = _rescue_spam(client, storage, ai) if settings.get("gmail_rescue_spam") else []
+        rescued = (_rescue_spam(client, storage, ai, trash_rest=bool(settings.get("gmail_trash_spam")))
+                   if settings.get("gmail_rescue_spam") else [])
 
         mails = list(client.fetch(client.search("newer_than:3d -in:sent -in:chats", limit=80)))
         known = storage.mail_analysis([m["uid"] for m in mails])
@@ -177,6 +186,25 @@ def _mail_digest(ai: AIClient, attention: list[dict[str, Any]]) -> str:
     except AIError as exc:
         log.warning("Сводка почты не получилась: %s", exc)
         return ""
+
+
+def run_purge(storage: Storage, kinds: list[str] | None = None) -> dict[str, Any]:
+    """Генеральная уборка почты (вызывается кнопкой, при первом подключении и раз в неделю)."""
+    from . import mail_cleanup
+
+    settings = storage.get_settings()
+    if not (settings.get("gmail_email") and settings.get("gmail_app_password")):
+        return {"error": "Gmail не подключён"}
+    return mail_cleanup.purge(storage, settings, kinds or mail_cleanup.selected_kinds(settings),
+                              AIClient.from_settings(settings), lambda text: notify(storage, settings, text))
+
+
+def maybe_first_purge(storage: Storage) -> None:
+    """Первая уборка всего ящика — сразу после подключения почты (если автоуборка включена)."""
+    settings = storage.get_settings()
+    if (settings.get("gmail_auto_purge") and settings.get("gmail_email") and settings.get("gmail_app_password")
+            and storage.get_snapshot("mail_cleanup")["data"] is None):
+        run_purge(storage)
 
 
 # ------------------------------------------------------------------ расписание

@@ -33,6 +33,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "gmail_cleanup": True,
     "gmail_receipts_archive": True,
     "gmail_rescue_spam": True,
+    "gmail_trash_promo": True,
+    "gmail_trash_spam": True,
+    "gmail_auto_purge": True,
+    "gmail_purge_kinds": "promotions,promo,spam",
+    "gmail_purge_permanent": False,
     # GitHub
     "github_token": "",
     # Расписание: личный кабинет (основной путь), ICS, ручная таблица

@@ -219,3 +219,7 @@ code { font-size: 12px; background: var(--line); padding: 1px 5px; border-radius
 .dot-state.off { background: var(--err); }
 .ports tr.public td:first-child { color: var(--err); }
 @media (max-width: 720px) { .project { flex-direction: column; } .project-actions { text-align: left; } }
+.cleanup-kind { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.cleanup-kind:last-of-type { border-bottom: 0; }
+button.danger-fill { background: var(--err); border-color: var(--err); color: #fff; }
+button:disabled { opacity: .5; cursor: not-allowed; }

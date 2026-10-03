@@ -15,7 +15,8 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "icon": "📧", "title": "Почта",
         "about": "Gmail: сортировка, уборка, чеки, проверка спама",
         "fields": ["gmail_email", "gmail_app_password", "gmail_apply_labels", "gmail_cleanup",
-                   "gmail_receipts_archive", "gmail_rescue_spam"],
+                   "gmail_receipts_archive", "gmail_rescue_spam", "gmail_trash_promo", "gmail_trash_spam",
+                   "gmail_auto_purge", "gmail_purge_permanent"],
     },
     "social": {
         "icon": "💬", "title": "Соцсети и мессенджеры",
