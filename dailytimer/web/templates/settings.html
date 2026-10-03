@@ -3,115 +3,183 @@
   <label class="check"><input type="checkbox" name="{{ name }}" {% if s[name] %}checked{% endif %}> {{ text }}</label>
 {%- endmacro %}
 {% block content %}
-<h1>Подключения</h1>
-{% if saved %}<div class="card notice">Сохранено. Данные уже обновляются в фоне — через минуту загляни на главную.</div>{% endif %}
-<form method="post" action="/settings" class="settings">
+<div class="settings-layout">
+  <nav class="side">
+    <a href="/settings" class="side-all">← Все разделы</a>
+    {% for key, meta in sections.items() %}
+      <a href="/settings/{{ key }}" class="{% if key == section %}active{% endif %}">{{ meta.icon }} {{ meta.title }}</a>
+    {% endfor %}
+  </nav>
 
-  <section class="card">
-    <h2>🎓 Расписание — личный кабинет</h2>
-    <p class="muted">Вставь адрес кабинета, логин и пароль. Система сама войдёт через встроенный браузер,
-      откроет страницу расписания и вытащит пары (каждые N часов).</p>
-    <label>Адрес страницы входа <input name="schedule_portal_url" value="{{ s.schedule_portal_url }}" placeholder="https://lk.university.ru/login"></label>
-    <label>Адрес страницы с расписанием (если оно не на главной после входа)
-      <input name="schedule_page_url" value="{{ s.schedule_page_url }}" placeholder="https://lk.university.ru/schedule"></label>
-    <label>Логин <input name="schedule_login" value="{{ s.schedule_login }}" autocomplete="off"></label>
-    <label>Пароль <input name="schedule_password" type="password" value="{{ s.schedule_password }}" autocomplete="new-password"></label>
-    <label>Обновлять раз в N часов <input name="schedule_refresh_hours" type="number" min="1" value="{{ s.schedule_refresh_hours }}"></label>
-    <details>
-      <summary>Другие источники расписания</summary>
-      <label>ICS / webcal ссылка <input name="schedule_ics_url" value="{{ s.schedule_ics_url }}"></label>
-      <label>Вручную — по строке на пару
-        <textarea name="schedule_manual" rows="5" placeholder="пн 09:00-10:30 Матанализ, ауд. 301&#10;ср 10:40-12:10 Программирование чёт">{{ s.schedule_manual }}</textarea>
+  <div class="settings-body">
+    <h1>{{ sections[section].icon }} {{ sections[section].title }}</h1>
+    <div class="status {{ status[0] }}">● {{ status[1] }}</div>
+    {% if saved %}<div class="card notice">Сохранено. Данные обновляются в фоне — через минуту загляни на главную.</div>{% endif %}
+    {% if info %}<div class="card notice">{{ info }}</div>{% endif %}
+    {% if error %}<div class="card notice err">{{ error }}</div>{% endif %}
+
+{% if section == "study" %}
+    <form method="post" class="settings card">
+      <h2>Личный кабинет вуза</h2>
+      <p class="muted">Вставь адрес кабинета, логин и пароль. Система сама войдёт через встроенный браузер и будет забирать пары.
+        Для <b>МТУСИ</b> (lk.mtuci.ru) есть точная интеграция: группа берётся из профиля, расписание — из API кабинета.</p>
+      <label>Адрес кабинета <input name="schedule_portal_url" value="{{ s.schedule_portal_url }}" placeholder="https://lk.mtuci.ru/student/schedule"></label>
+      <label>Логин <input name="schedule_login" value="{{ s.schedule_login }}" autocomplete="off" placeholder="i.i.ivanov@edu.mtuci.ru"></label>
+      <label>Пароль <input name="schedule_password" type="password" value="{{ s.schedule_password }}" autocomplete="new-password"></label>
+      <label>Обновлять раз в N часов <input name="schedule_refresh_hours" type="number" min="1" value="{{ s.schedule_refresh_hours }}"></label>
+      <details>
+        <summary>Дополнительно</summary>
+        <label>Группа (если не определилась сама, например БВТ2401) <input name="mtuci_group" value="{{ s.mtuci_group }}"></label>
+        <label>Отдельная страница расписания (для других вузов, если оно не на главной)
+          <input name="schedule_page_url" value="{{ s.schedule_page_url }}"></label>
+        <label>ICS / webcal ссылка <input name="schedule_ics_url" value="{{ s.schedule_ics_url }}"></label>
+        <label>Вручную — по строке на пару
+          <textarea name="schedule_manual" rows="4" placeholder="пн 09:00-10:30 Матанализ, ауд. 301&#10;ср 10:40-12:10 Программирование чёт">{{ s.schedule_manual }}</textarea>
+        </label>
+      </details>
+      <button class="primary">Сохранить</button>
+    </form>
+    {% set portal = snaps.portal.data %}
+    {% if portal and portal.lessons %}
+      <div class="card"><h2>Что увидела система</h2>
+        <p class="muted small">{% if portal.student %}{{ portal.student }} · {% endif %}{% if portal.group %}группа {{ portal.group }} · {% endif %}занятий на 2 недели: {{ portal.lessons|length }}</p>
+        {% for l in portal.lessons[:6] %}<div class="row small"><b>{{ l.start[8:10] }}.{{ l.start[5:7] }} {{ l.start[11:16] }}</b> {{ l.title }} <span class="muted">{{ l.location }}</span></div>{% endfor %}
+      </div>
+    {% endif %}
+
+{% elif section == "mail" %}
+    <form method="post" class="settings card">
+      <h2>Gmail</h2>
+      <p class="muted">Google не пускает сторонние программы по обычному паролю — это их ограничение.
+        Один раз создай <a href="https://myaccount.google.com/apppasswords" target="_blank">пароль приложения</a>
+        (нужна двухэтапная проверка) и вставь его сюда.</p>
+      <label>Адрес <input name="gmail_email" type="email" value="{{ s.gmail_email }}" placeholder="you@gmail.com"></label>
+      <label>Пароль приложения <input name="gmail_app_password" type="password" value="{{ s.gmail_app_password }}" placeholder="xxxx xxxx xxxx xxxx"></label>
+      {{ check("gmail_apply_labels", "Раскладывать письма по ярлыкам DT/* в Gmail") }}
+      {{ check("gmail_cleanup", "Убирать рекламу, рассылки и неважное из «Входящих» (в архив, не удаляется)") }}
+      {{ check("gmail_receipts_archive", "Собирать все чеки и оплаты в ярлык DT/Receipts") }}
+      {{ check("gmail_rescue_spam", "Проверять «Спам» и возвращать важные письма во «Входящие»") }}
+      <button class="primary">Сохранить</button>
+    </form>
+
+{% elif section == "social" %}
+    <div class="card settings">
+      <h2>Telegram — мои чаты</h2>
+      <p class="muted">Покажет, кто ждёт ответа в личке и где тебя упомянули, и добавит это в план дня. Только чтение — ничего не отправляет.</p>
+      {% if s.tg_session %}
+        <p>Подключён аккаунт <b>{{ s.tg_name }}</b> ({{ s.tg_phone }}).</p>
+        <form method="post" action="/telegram/account/logout"><button>Отключить</button></form>
+      {% elif raw_tg_pending %}
+        <form method="post" action="/telegram/account/login">
+          <label>Код из Telegram <input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+          <label>Облачный пароль (если включён) <input name="password" type="password" autocomplete="off"></label>
+          <button class="primary">Войти</button>
+        </form>
+        <form method="post" action="/telegram/account/logout"><button>Отмена</button></form>
+      {% else %}
+        <form method="post" action="/telegram/account/code">
+          <p class="muted small">Telegram требует для сторонних программ ключ приложения: зайди на
+            <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a> под своим номером,
+            создай приложение (любое название) и скопируй <b>api_id</b> и <b>api_hash</b>. Это один раз.</p>
+          <label>api_id <input name="tg_api_id" value="{{ s.tg_api_id }}" inputmode="numeric"></label>
+          <label>api_hash <input name="tg_api_hash" type="password" value="{{ s.tg_api_hash }}"></label>
+          <label>Номер телефона <input name="tg_phone" value="{{ s.tg_phone }}" placeholder="+79991234567" required></label>
+          <button class="primary">Получить код</button>
+        </form>
+      {% endif %}
+    </div>
+
+    <form method="post" class="settings card">
+      <h2>Telegram-бот для уведомлений</h2>
+      <p class="muted">Создай бота у <a href="https://t.me/BotFather" target="_blank">@BotFather</a> (команда /newbot), вставь токен
+        и напиши своему боту /start. Утром придёт план, а днём — срочные письма.</p>
+      <label>Токен бота <input name="telegram_bot_token" type="password" value="{{ s.telegram_bot_token }}" placeholder="123456:ABC..."></label>
+      {{ check("telegram_notify_mail", "Присылать важные письма и письма, которые ждут ответа") }}
+      <button class="primary">Сохранить</button>
+      {% if s.telegram_bot_token %}<button formaction="/telegram/test">Отправить тестовое сообщение</button>{% endif %}
+    </form>
+
+    <div class="card">
+      <h2>Другие соцсети</h2>
+      <table class="services">
+        <tr><td>ВКонтакте</td><td class="muted">Личные сообщения VK закрыл для сторонних приложений. Уведомления VK, приходящие на почту, попадут в раздел «Соцсети».</td></tr>
+        <tr><td>Instagram, TikTok</td><td class="muted">Официального доступа к сообщениям нет. Письма от них сортируются в «Соцсети» и убираются из «Входящих».</td></tr>
+        <tr><td>Discord</td><td class="muted">Чтение личных сообщений через API запрещено правилами Discord (бан аккаунта).</td></tr>
+        <tr><td>WhatsApp</td><td class="muted">Нет открытого API для личного аккаунта.</td></tr>
+      </table>
+    </div>
+
+{% elif section == "dev" %}
+    <form method="post" class="settings card">
+      <h2>GitHub</h2>
+      <p class="muted">GitHub не даёт входить в API по паролю. Создай
+        <a href="https://github.com/settings/tokens/new?scopes=repo,notifications,read:user&description=DailyTimer" target="_blank">токен</a>
+        (права уже выбраны по ссылке), срок — «No expiration».</p>
+      <label>Токен <input name="github_token" type="password" value="{{ s.github_token }}" placeholder="ghp_..."></label>
+      <h2>Соревнования</h2>
+      {{ check("codeforces", "Показывать ближайшие контесты Codeforces") }}
+      <button class="primary">Сохранить</button>
+    </form>
+
+{% elif section == "money" %}
+    <form method="post" class="settings card">
+      <h2>Подписки</h2>
+      <p class="muted">Находятся сами по чекам в Gmail (раздел «Почта»): Spotify, Яндекс Плюс, ChatGPT, Apple, Steam и др.
+        Все чеки собираются в ярлык DT/Receipts, а траты за месяц видны на главной.
+        Можно добавить подписку вручную: «название сумма валюта день списания».</p>
+      <textarea name="subscriptions_manual" rows="4" placeholder="Spotify 299 RUB 15&#10;ChatGPT 20 USD 3">{{ s.subscriptions_manual }}</textarea>
+      <button class="primary">Сохранить</button>
+    </form>
+
+{% elif section == "ai" %}
+    <form method="post" class="settings card">
+      <h2>ИИ без ключей</h2>
+      <p class="muted">Модель работает прямо на твоём сервере (Ollama) — бесплатно, без ключей и лимитов, почта никуда не уходит.
+        Если локальная не ответит — запасной бесплатный облачный вариант без ключа.</p>
+      <label>Режим
+        <select name="ai_mode">
+          {% for value, text in [('auto', 'Авто: локальная → облако без ключа'), ('local', 'Только локальная'), ('cloud', 'Только облако без ключа'), ('off', 'Выключен (только правила)')] %}
+            <option value="{{ value }}" {% if s.ai_mode == value %}selected{% endif %}>{{ text }}</option>
+          {% endfor %}
+        </select>
       </label>
-    </details>
-  </section>
+      <label>Локальная модель
+        <select name="ai_local_model">
+          <option value="" {% if not s.ai_local_model %}selected{% endif %}>по умолчанию (подобрана под память сервера)</option>
+          {% for name, note in models.items() %}
+            <option value="{{ name }}" {% if s.ai_local_model == name %}selected{% endif %}>{{ name }} — {{ note }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <details>
+        <summary>Свой API (необязательно)</summary>
+        <label>URL OpenAI-совместимого API <input name="ai_custom_url" value="{{ s.ai_custom_url }}"></label>
+        <label>Модель <input name="ai_custom_model" value="{{ s.ai_custom_model }}"></label>
+        <label>Ключ <input name="ai_api_key" type="password" value="{{ s.ai_api_key }}"></label>
+        <label>Адрес Ollama <input name="ai_local_url" value="{{ s.ai_local_url }}" placeholder="http://ollama:11434"></label>
+      </details>
+      <button class="primary">Сохранить</button>
+    </form>
 
-  <section class="card">
-    <h2>📧 Gmail</h2>
-    <p class="muted">Google не пускает сторонние программы по обычному паролю — это их ограничение.
-      Один раз создай <a href="https://myaccount.google.com/apppasswords" target="_blank">пароль приложения</a>
-      (нужна двухэтапная проверка) и вставь его сюда.</p>
-    <label>Адрес <input name="gmail_email" type="email" value="{{ s.gmail_email }}" placeholder="you@gmail.com"></label>
-    <label>Пароль приложения <input name="gmail_app_password" type="password" value="{{ s.gmail_app_password }}" placeholder="xxxx xxxx xxxx xxxx"></label>
-    {{ check("gmail_apply_labels", "Раскладывать письма по ярлыкам DT/* в Gmail") }}
-    {{ check("gmail_cleanup", "Убирать рекламу, рассылки и неважное из «Входящих» (в архив, не удаляется)") }}
-    {{ check("gmail_receipts_archive", "Собирать все чеки и оплаты в ярлык DT/Receipts и убирать из «Входящих»") }}
-    {{ check("gmail_rescue_spam", "Проверять «Спам» и возвращать важные письма во «Входящие»") }}
-  </section>
-
-  <section class="card">
-    <h2>🐙 GitHub</h2>
-    <p class="muted">GitHub не даёт входить в API по паролю. Создай
-      <a href="https://github.com/settings/tokens/new?scopes=repo,notifications,read:user&description=DailyTimer" target="_blank">токен</a>
-      (права уже выбраны по ссылке), срок — «No expiration».</p>
-    <label>Токен <input name="github_token" type="password" value="{{ s.github_token }}" placeholder="ghp_..."></label>
-  </section>
-
-  <section class="card">
-    <h2>🤖 ИИ — без ключей</h2>
-    <p class="muted">Модель работает прямо на твоём сервере (Ollama) — бесплатно, без ключей и лимитов, почта никуда не уходит.
-      Если локальная не ответит — запасной бесплатный облачный вариант без ключа.</p>
-    <label>Режим
-      <select name="ai_mode">
-        {% for value, text in [('auto', 'Авто: локальная → облако без ключа'), ('local', 'Только локальная'), ('cloud', 'Только облако без ключа'), ('off', 'Выключен (только правила)')] %}
-          <option value="{{ value }}" {% if s.ai_mode == value %}selected{% endif %}>{{ text }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Локальная модель
-      <select name="ai_local_model">
-        <option value="" {% if not s.ai_local_model %}selected{% endif %}>по умолчанию (подобрана под память сервера)</option>
-        {% for name, note in models.items() %}
-          <option value="{{ name }}" {% if s.ai_local_model == name %}selected{% endif %}>{{ name }} — {{ note }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <details>
-      <summary>Свой API (необязательно)</summary>
-      <label>URL OpenAI-совместимого API <input name="ai_custom_url" value="{{ s.ai_custom_url }}"></label>
-      <label>Модель <input name="ai_custom_model" value="{{ s.ai_custom_model }}"></label>
-      <label>Ключ <input name="ai_api_key" type="password" value="{{ s.ai_api_key }}"></label>
-      <label>Адрес Ollama <input name="ai_local_url" value="{{ s.ai_local_url }}" placeholder="http://ollama:11434"></label>
-    </details>
-  </section>
-
-  <section class="card">
-    <h2>📲 Telegram-уведомления</h2>
-    <p class="muted">Создай бота у <a href="https://t.me/BotFather" target="_blank">@BotFather</a> (команда /newbot), вставь токен
-      и напиши своему боту /start. Утром придёт план, а в течение дня — срочные письма.</p>
-    <label>Токен бота <input name="telegram_bot_token" type="password" value="{{ s.telegram_bot_token }}" placeholder="123456:ABC..."></label>
-    <input type="hidden" name="telegram_chat_id" value="{{ s.telegram_chat_id }}">
-    {{ check("telegram_notify_mail", "Присылать важные письма и письма, которые ждут ответа") }}
-    {% if s.telegram_bot_token %}<button formaction="/telegram/test" formmethod="post">Отправить тестовое сообщение</button>{% endif %}
-  </section>
-
-  <section class="card">
-    <h2>💳 Подписки</h2>
-    <p class="muted">Находятся сами по чекам в Gmail. Можно добавить вручную: «название сумма валюта день».</p>
-    <textarea name="subscriptions_manual" rows="3" placeholder="Spotify 299 RUB 15&#10;ChatGPT 20 USD 3">{{ s.subscriptions_manual }}</textarea>
-  </section>
-
-  <section class="card">
-    <h2>➕ Ещё сервисы (без ключей)</h2>
-    <label>Город для погоды <input name="weather_city" value="{{ s.weather_city }}" placeholder="Москва"></label>
-    <label>Другие календари — «Название | секретная ICS-ссылка» (Google, Яндекс, Outlook, Apple)
-      <textarea name="calendars_extra" rows="3" placeholder="Google | https://calendar.google.com/calendar/ical/.../basic.ics">{{ s.calendars_extra }}</textarea>
-    </label>
-    <label>Новостные ленты RSS — по одной ссылке в строке
-      <textarea name="rss_feeds" rows="3" placeholder="https://habr.com/ru/rss/hubs/python/articles/">{{ s.rss_feeds }}</textarea>
-    </label>
-    {{ check("codeforces", "Показывать ближайшие контесты Codeforces") }}
-  </section>
-
-  <section class="card">
-    <h2>⏰ Режим дня</h2>
-    <label>Часовой пояс <input name="timezone" value="{{ s.timezone }}"></label>
-    <label>Подъём <input name="wake_time" type="time" value="{{ s.wake_time }}"></label>
-    <label>Отбой <input name="sleep_time" type="time" value="{{ s.sleep_time }}"></label>
-    <label>Когда составлять план <input name="plan_time" type="time" value="{{ s.plan_time }}"></label>
-    <label>Обновлять почту и GitHub каждые N минут <input name="sync_interval_minutes" type="number" min="5" value="{{ s.sync_interval_minutes }}"></label>
-  </section>
-
-  <button class="primary big">Сохранить</button>
-</form>
+{% elif section == "other" %}
+    <form method="post" class="settings card">
+      <h2>Режим дня</h2>
+      <label>Часовой пояс <input name="timezone" value="{{ s.timezone }}"></label>
+      <label>Подъём <input name="wake_time" type="time" value="{{ s.wake_time }}"></label>
+      <label>Отбой <input name="sleep_time" type="time" value="{{ s.sleep_time }}"></label>
+      <label>Когда составлять план <input name="plan_time" type="time" value="{{ s.plan_time }}"></label>
+      <label>Обновлять почту, GitHub и Telegram каждые N минут <input name="sync_interval_minutes" type="number" min="5" value="{{ s.sync_interval_minutes }}"></label>
+      <h2>Без ключей</h2>
+      <label>Город для погоды <input name="weather_city" value="{{ s.weather_city }}" placeholder="Москва"></label>
+      <label>Другие календари — «Название | секретная ICS-ссылка» (Google, Яндекс, Outlook, Apple)
+        <textarea name="calendars_extra" rows="3" placeholder="Google | https://calendar.google.com/calendar/ical/.../basic.ics">{{ s.calendars_extra }}</textarea>
+      </label>
+      <label>Новостные ленты RSS — по одной ссылке в строке
+        <textarea name="rss_feeds" rows="3" placeholder="https://habr.com/ru/rss/hubs/python/articles/">{{ s.rss_feeds }}</textarea>
+      </label>
+      <button class="primary">Сохранить</button>
+    </form>
+{% endif %}
+  </div>
+</div>
 {% endblock %}

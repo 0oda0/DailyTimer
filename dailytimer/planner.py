@@ -15,7 +15,7 @@ _SYSTEM = """Ты — личный ассистент-планировщик с�
 1. «## Главное сегодня» — 3 самых важных пункта.
 2. «## Расписание» — блоки по времени от подъёма до сна: пары (фиксированы), дорога,
    глубокая работа, ревью PR, разбор почты, еда, отдых. Не ставь задачи поверх пар.
-3. «## Почта» — на какие письма ответить (и что примерно ответить) и что важно.
+3. «## Почта и сообщения» — на какие письма и Telegram-чаты ответить (и что примерно ответить), что важно.
 4. «## Деньги и подписки» — что скоро спишется и стоит ли отменить.
 Будь конкретным (названия репозиториев, тем писем, предметов), не выдумывай фактов."""
 
@@ -66,6 +66,15 @@ def build_context(data: dict[str, Any], settings: dict[str, Any], today: date) -
             amount = f"{s['amount']} {s['currency']}" if s.get("amount") else "сумма неизвестна"
             lines.append(f"- {s['name']}: {amount}, через {s['days_left']} дн. ({s['next_charge']})")
 
+    tg = data.get("telegram") or {}
+    waiting = [c for c in tg.get("chats", []) if c.get("waiting")]
+    mentioned = [c for c in tg.get("chats", []) if c.get("mentions") and not c.get("waiting")]
+    if waiting:
+        lines.append("\nTelegram — ждут моего ответа:")
+        lines += [f"- {c['name']} ({c['unread']} непрочит.): {c['text'][:120]}" for c in waiting[:8]]
+    if mentioned:
+        lines.append("Telegram — меня упомянули: " + ", ".join(c["name"] for c in mentioned[:8]))
+
     weather = data.get("weather") or {}
     for day in weather.get("days", [])[:1]:
         lines.append(f"\nПогода ({weather['city']}): {day['text']}, {day['min']}…{day['max']}°C, осадки {day['rain']}%")
@@ -93,6 +102,9 @@ def rule_based_plan(data: dict[str, Any], settings: dict[str, Any], today: date)
     important = [m for m in mails if m.get("important") or m.get("needs_reply")]
     if replies:
         top.append(f"Ответить на письма: {len(replies)}")
+    tg_waiting = [c for c in (data.get("telegram") or {}).get("chats", []) if c.get("waiting")]
+    if tg_waiting:
+        top.append("Ответить в Telegram: " + ", ".join(c["name"] for c in tg_waiting[:5]))
     weather = data.get("weather") or {}
     if weather.get("days"):
         d = weather["days"][0]

@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from dailytimer import planner, sorter
 from dailytimer.ai import AIClient, AIError, Backend, extract_json
-from dailytimer.connectors import feeds, gmail, portal, schedule, subscriptions
+from dailytimer.connectors import feeds, gmail, mtuci, portal, schedule, subscriptions, tg_account
 from dailytimer.storage import Storage
 from dailytimer.web.app import create_app, render_markdown
 
@@ -208,12 +208,12 @@ def test_web_auth_and_settings(tmp_path, monkeypatch):
     assert client.get("/").status_code == 401
     auth = ("admin", "pw")
     assert client.get("/", auth=auth).status_code == 200
-    resp = client.post("/settings", auth=auth, data={"github_token": "zz_secret_tok", "sync_interval_minutes": "30"},
+    resp = client.post("/settings/dev", auth=auth, data={"github_token": "zz_secret_tok"},
                        follow_redirects=False)
     assert resp.status_code == 303
-    page = client.get("/settings", auth=auth).text
+    page = client.get("/settings/dev", auth=auth).text
     assert "zz_secret_tok" not in page and "••••••••" in page
-    client.post("/settings", auth=auth, data={"github_token": "••••••••"})
+    client.post("/settings/dev", auth=auth, data={"github_token": "••••••••"})
     assert Storage(tmp_path).get_settings()["github_token"] == "zz_secret_tok"
     assert client.post("/plan", auth=auth).status_code == 200
 
@@ -222,3 +222,74 @@ def test_web_without_password_is_open(tmp_path, monkeypatch):
     monkeypatch.delenv("DAILYTIMER_PASSWORD", raising=False)
     client = TestClient(create_app(Storage(tmp_path), start_scheduler=False))
     assert client.get("/").status_code == 200
+
+
+def test_settings_sections_keep_other_checkboxes(tmp_path, monkeypatch):
+    monkeypatch.delenv("DAILYTIMER_PASSWORD", raising=False)
+    client = TestClient(create_app(Storage(tmp_path), start_scheduler=False))
+    overview = client.get("/settings").text
+    for title in ("Учёба", "Почта", "Соцсети и мессенджеры", "Разработка", "Финансы и подписки", "ИИ"):
+        assert title in overview
+    for section in ("study", "mail", "social", "dev", "money", "ai", "other"):
+        assert client.get(f"/settings/{section}").status_code == 200
+    assert client.get("/settings/nope").status_code == 404
+    # Сохранение раздела «Учёба» не должно снимать галочки почты.
+    client.post("/settings/study", data={"schedule_portal_url": "https://lk.mtuci.ru/student/schedule",
+                                         "schedule_login": "a@edu.mtuci.ru", "schedule_password": "pw"})
+    saved = Storage(tmp_path).get_settings()
+    assert saved["gmail_cleanup"] and saved["schedule_password"] == "pw"
+    client.post("/settings/mail", data={"gmail_email": "x@gmail.com"})
+    assert not Storage(tmp_path).get_settings()["gmail_cleanup"]
+    assert "кабинет подключён" in client.get("/settings").text
+
+
+MTUCI_TIMETABLE = {
+    "status": "success",
+    "data": {"days": {
+        "05.10.2026": [
+            {"UF_DISCIPLINE": "Основы права", "UF_TIME_START": "13:00", "UF_TIME_END": "14:30",
+             "UF_TEACHER": ["Иванова Н.В."], "UF_AUDIENCE": ["Н-458"], "UF_TYPE": "Лекции",
+             "UF_IS_RETAKE": "0", "UF_IS_ONLINE": "1", "UF_NUMBER": "3"},
+            {"UF_DISCIPLINE": "Матанализ", "UF_TIME_START": "09:30", "UF_TIME_END": "11:05",
+             "UF_TEACHER": [], "UF_AUDIENCE": ["А-101"], "UF_TYPE": "Экзамен", "UF_IS_RETAKE": "1"},
+        ],
+        "30.09.2026": [{"UF_DISCIPLINE": "Прошлое", "UF_TIME_START": "09:30", "UF_TIME_END": "11:05"}],
+        "06.10.2026": [],
+    }},
+}
+
+
+def test_mtuci_timetable_parse():
+    lessons = mtuci.parse_timetable(MTUCI_TIMETABLE, MONDAY, 14)
+    assert [(l["start"], l["title"], l["location"]) for l in lessons] == [
+        ("2026-10-05T09:30:00", "Матанализ (экзамен) — пересдача", "А-101"),
+        ("2026-10-05T13:00:00", "Основы права (лекция)", "онлайн · Н-458 · Иванова Н.В."),
+    ]
+    assert mtuci.is_mtuci("https://lk.mtuci.ru/student/schedule") and not mtuci.is_mtuci("https://lk.hse.ru")
+    profile = {"data": {"Ответ": {"МассивБлоков": [{"ПереченьЗначений": {"Группа": {"name": "БВТ2401"}}}]}}}
+    assert mtuci.parse_group(profile) == "БВТ2401" and mtuci.parse_group({}) is None
+    try:
+        mtuci.parse_timetable({"status": "error"}, MONDAY, 7)
+        raise AssertionError("ожидалась ошибка")
+    except mtuci.MtuciError:
+        pass
+
+
+def test_tg_dialog_summary():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace as NS
+
+    def dialog(name, unread, *, user=True, group=False, out=False, mentions=0, muted=False, bot=False):
+        mute = datetime(2100, 1, 1, tzinfo=timezone.utc) if muted else None
+        return NS(name=name, unread_count=unread, unread_mentions_count=mentions, is_user=user, is_group=group,
+                  entity=NS(bot=bot), dialog=NS(notify_settings=NS(mute_until=mute)),
+                  message=NS(message="Привет, ты где?", out=out, date=datetime(2026, 10, 3, tzinfo=timezone.utc)))
+
+    friend = tg_account.summarize_dialog(dialog("Аня", 2))
+    assert friend["waiting"] and friend["kind"] == "user" and friend["text"] == "Привет, ты где?"
+    assert tg_account.summarize_dialog(dialog("Аня", 0)) is None
+    assert not tg_account.summarize_dialog(dialog("Я ответил", 1, out=True))["waiting"]
+    assert tg_account.summarize_dialog(dialog("Канал", 50, user=False)) is None
+    assert tg_account.summarize_dialog(dialog("Флуд", 99, user=False, group=True, muted=True)) is None
+    assert tg_account.summarize_dialog(dialog("Группа", 9, user=False, group=True, muted=True, mentions=1))["mentions"] == 1
+    assert tg_account.summarize_dialog(dialog("Бот", 1, bot=True))["kind"] == "bot"

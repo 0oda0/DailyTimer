@@ -11,6 +11,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -22,8 +23,10 @@ from fastapi.templating import Jinja2Templates
 
 from .. import sync
 from ..ai import LOCAL_MODELS, AIClient
+from ..connectors import tg_account
 from ..sorter import CATEGORIES
 from ..storage import DEFAULT_SETTINGS, SECRET_FIELDS, Storage
+from .sections import SECTIONS, section_status
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
@@ -173,20 +176,53 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
             },
         )
 
+    def masked_settings() -> dict[str, Any]:
+        return {k: ("••••••••" if k in SECRET_FIELDS and v else v) for k, v in storage.get_settings().items()}
+
+    def after_change() -> None:
+        if not start_scheduler:
+            return
+        reschedule()
+        in_background(lambda: sync.sync_all(storage, force=True))
+        ai = AIClient.from_settings(storage.get_settings())
+        if ai and ai.local:
+            in_background(ai.local.ensure_model)
+
+    def back(section: str, **params: str) -> RedirectResponse:
+        query = "&".join(f"{k}={quote(v)}" for k, v in params.items())
+        return RedirectResponse(f"/settings/{section}" + (f"?{query}" if query else ""), status_code=303)
+
     @app.get("/settings", response_class=HTMLResponse, dependencies=[Depends(auth)])
-    def settings_page(request: Request, saved: bool = False) -> Any:
+    def settings_overview(request: Request) -> Any:
         settings = storage.get_settings()
-        masked = {k: ("••••••••" if k in SECRET_FIELDS and v else v) for k, v in settings.items()}
+        snaps = {src: storage.get_snapshot(src) for src in sync.SOURCES}
+        cards = [
+            {"key": key, **meta, "status": section_status(key, settings, snaps)} for key, meta in SECTIONS.items()
+        ]
+        return templates.TemplateResponse(request, "settings_overview.html", {"cards": cards, "sections": SECTIONS})
+
+    @app.get("/settings/{section}", response_class=HTMLResponse, dependencies=[Depends(auth)])
+    def settings_section(request: Request, section: str, saved: bool = False, error: str = "", info: str = "") -> Any:
+        if section not in SECTIONS:
+            raise HTTPException(status.HTTP_404_NOT_FOUND)
+        snaps = {src: storage.get_snapshot(src) for src in sync.SOURCES}
         return templates.TemplateResponse(
-            request, "settings.html", {"s": masked, "models": LOCAL_MODELS, "saved": saved}
+            request,
+            "settings.html",
+            {"s": masked_settings(), "raw_tg_pending": bool(storage.get_settings().get("tg_pending")),
+             "models": LOCAL_MODELS, "saved": saved, "error": error, "info": info,
+             "section": section, "sections": SECTIONS, "snaps": snaps,
+             "status": section_status(section, storage.get_settings(), snaps)},
         )
 
-    @app.post("/settings", dependencies=[Depends(auth)])
-    async def save_settings(request: Request) -> Any:
+    @app.post("/settings/{section}", dependencies=[Depends(auth)])
+    async def save_settings(request: Request, section: str) -> Any:
+        if section not in SECTIONS:
+            raise HTTPException(status.HTTP_404_NOT_FOUND)
         form = await request.form()
         updates: dict[str, Any] = {}
-        for key in DEFAULT_SETTINGS:
-            if key in BOOL_FIELDS:
+        for key in SECTIONS[section]["fields"]:
+            if key in BOOL_FIELDS:  # галочки — только из этого раздела, иначе снимутся чужие
                 updates[key] = form.get(key) == "on"
                 continue
             if key not in form:
@@ -204,23 +240,54 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
         if "telegram_bot_token" in updates:
             updates["telegram_chat_id"] = ""  # новый бот — chat_id найдём заново по /start
         storage.save_settings(updates)
-        if start_scheduler:
-            reschedule()
-            in_background(lambda: sync.sync_all(storage, force=True))
-            ai = AIClient.from_settings(storage.get_settings())
-            if ai and ai.local:
-                in_background(ai.local.ensure_model)
-        return RedirectResponse("/settings?saved=1", status_code=303)
-
-    @app.post("/sync", dependencies=[Depends(auth)])
-    def run_sync() -> Any:
-        in_background(lambda: sync.sync_all(storage, force=True))
-        return RedirectResponse("/?busy=1", status_code=303)
+        after_change()
+        return back(section, saved="1")
 
     @app.post("/telegram/test", dependencies=[Depends(auth)])
     def telegram_test() -> Any:
         sync.notify(storage, storage.get_settings(), "DailyTimer подключён ✅ Сюда будут приходить план дня и срочные письма.")
-        return RedirectResponse("/settings?saved=1", status_code=303)
+        return back("social", info="Тестовое сообщение отправлено — проверь Telegram")
+
+    @app.post("/telegram/account/code", dependencies=[Depends(auth)])
+    async def telegram_send_code(request: Request) -> Any:
+        form = await request.form()
+        current = storage.get_settings()
+        api_id = str(form.get("tg_api_id", "")).strip() or current.get("tg_api_id", "")
+        api_hash = str(form.get("tg_api_hash", "")).strip()
+        if not api_hash or api_hash == "••••••••":
+            api_hash = current.get("tg_api_hash", "")
+        phone = str(form.get("tg_phone", "")).strip().replace(" ", "")
+        try:
+            pending, code_hash = tg_account.send_code(api_id, api_hash, phone)
+        except tg_account.TgError as exc:
+            return back("social", error=str(exc))
+        storage.save_settings({"tg_api_id": api_id, "tg_api_hash": api_hash, "tg_phone": phone,
+                               "tg_pending": f"{pending}|{code_hash}"})
+        return back("social", info="Код отправлен в Telegram — введи его ниже")
+
+    @app.post("/telegram/account/login", dependencies=[Depends(auth)])
+    async def telegram_login(request: Request) -> Any:
+        form = await request.form()
+        current = storage.get_settings()
+        pending, _, code_hash = (current.get("tg_pending") or "").rpartition("|")
+        if not pending:
+            return back("social", error="Сначала запроси код")
+        try:
+            session, name = tg_account.sign_in(
+                current["tg_api_id"], current["tg_api_hash"], pending, current["tg_phone"],
+                str(form.get("code", "")), code_hash, str(form.get("password", "")),
+            )
+        except tg_account.TgError as exc:
+            return back("social", error=str(exc))
+        storage.save_settings({"tg_session": session, "tg_pending": "", "tg_name": name})
+        after_change()
+        return back("social", info=f"Telegram подключён: {name}")
+
+    @app.post("/telegram/account/logout", dependencies=[Depends(auth)])
+    def telegram_logout() -> Any:
+        storage.save_settings({"tg_session": "", "tg_pending": "", "tg_name": ""})
+        storage.save_snapshot("telegram", {"chats": []})
+        return back("social", info="Telegram-аккаунт отключён")
 
     @app.post("/plan", dependencies=[Depends(auth)])
     def run_plan() -> Any:

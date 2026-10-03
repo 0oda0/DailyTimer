@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Подключения</h1>
+<p class="muted">Каждый раздел настраивается один раз — дальше всё обновляется само.</p>
+<div class="sections-grid">
+  {% for c in cards %}
+    <a class="card section-card" href="/settings/{{ c.key }}">
+      <div class="section-head"><span class="section-icon">{{ c.icon }}</span><b>{{ c.title }}</b></div>
+      <div class="muted small">{{ c.about }}</div>
+      <div class="status {{ c.status[0] }}">● {{ c.status[1] }}</div>
+    </a>
+  {% endfor %}
+</div>
+{% endblock %}

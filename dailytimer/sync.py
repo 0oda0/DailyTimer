@@ -11,11 +11,11 @@ from zoneinfo import ZoneInfo
 
 from . import planner, sorter
 from .ai import AIClient, AIError
-from .connectors import feeds, github, gmail, portal, schedule, subscriptions, telegram
+from .connectors import feeds, github, gmail, mtuci, portal, schedule, subscriptions, telegram, tg_account
 from .storage import Storage
 
 log = logging.getLogger(__name__)
-SOURCES = ("github", "gmail", "schedule", "portal", "subscriptions", "weather", "feeds", "codeforces")
+SOURCES = ("github", "gmail", "telegram", "schedule", "portal", "subscriptions", "weather", "feeds", "codeforces")
 _sync_lock = threading.Lock()
 
 
@@ -175,6 +175,23 @@ def _mail_digest(ai: AIClient, attention: list[dict[str, Any]]) -> str:
         return ""
 
 
+# ------------------------------------------------------------------ расписание
+
+def fetch_portal(settings: dict[str, Any], today, ai: AIClient | None, state: str) -> dict[str, Any]:
+    """Для известных вузов — точный API, для остальных — универсальный разбор страницы."""
+    url = settings.get("schedule_portal_url") or settings.get("schedule_page_url") or ""
+    if mtuci.is_mtuci(url):
+        try:
+            return mtuci.fetch(settings, today, days=14, state_file=state)
+        except mtuci.MtuciError as exc:
+            if "логин" in str(exc) or "пароль" in str(exc):
+                raise
+            log.warning("API МТУСИ не сработал, пробую разбор страницы: %s", exc)
+            fallback = dict(settings, schedule_page_url=settings.get("schedule_page_url") or mtuci.BASE + "/student/schedule")
+            return portal.fetch(fallback, today, ai, state)
+    return portal.fetch(settings, today, ai, state)
+
+
 # ------------------------------------------------------------------ всё вместе
 
 def sync_all(storage: Storage, force: bool = False) -> dict[str, str | None]:
@@ -197,6 +214,10 @@ def sync_all(storage: Storage, force: bool = False) -> dict[str, str | None]:
                 errors[source] = str(exc)
                 return None
 
+        if settings.get("tg_session"):
+            run("telegram", lambda: storage.save_snapshot("telegram", tg_account.fetch(
+                settings["tg_api_id"], settings["tg_api_hash"], settings["tg_session"])))
+
         if settings.get("github_token"):
             run("github", lambda: storage.save_snapshot("github", github.fetch(settings["github_token"])))
 
@@ -204,7 +225,7 @@ def sync_all(storage: Storage, force: bool = False) -> dict[str, str | None]:
         if settings.get("schedule_login") and (settings.get("schedule_portal_url") or settings.get("schedule_page_url")):
             if force or is_stale(storage, "portal", portal_hours):
                 state = str(storage.data_dir / "portal_session.json")
-                run("portal", lambda: storage.save_snapshot("portal", portal.fetch(settings, today, ai, state)))
+                run("portal", lambda: storage.save_snapshot("portal", fetch_portal(settings, today, ai, state)))
 
         def build_schedule() -> None:
             data = schedule.fetch(settings, today, days=14)

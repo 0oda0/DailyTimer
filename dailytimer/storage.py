@@ -15,7 +15,10 @@ from cryptography.fernet import Fernet, InvalidToken
 DATA_DIR = Path(os.environ.get("DAILYTIMER_DATA", Path.cwd() / "data"))
 
 # Поля настроек, которые хранятся только в зашифрованном виде.
-SECRET_FIELDS = {"gmail_app_password", "github_token", "ai_api_key", "schedule_password", "telegram_bot_token"}
+SECRET_FIELDS = {
+    "gmail_app_password", "github_token", "ai_api_key", "schedule_password", "telegram_bot_token",
+    "tg_api_hash", "tg_session", "tg_pending",
+}
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "timezone": "Europe/Moscow",
@@ -38,6 +41,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "schedule_login": "",
     "schedule_password": "",
     "schedule_refresh_hours": 6,
+    "mtuci_group": "",
     "schedule_ics_url": "",
     "schedule_manual": "",
     "calendars_extra": "",
@@ -50,6 +54,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ai_custom_url": "",
     "ai_custom_model": "",
     "ai_api_key": "",
+    # Telegram-аккаунт (чтение чатов)
+    "tg_api_id": "",
+    "tg_api_hash": "",
+    "tg_phone": "",
+    "tg_session": "",
+    "tg_pending": "",
+    "tg_name": "",
     # Дополнительно
     "telegram_bot_token": "",
     "telegram_chat_id": "",

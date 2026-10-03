@@ -38,6 +38,22 @@
     {% elif cleaned %}<p class="muted small">Убрано из «Входящих» за 3 дня (реклама, рассылки, чеки): {{ cleaned }}</p>{% endif %}
   </section>
 
+  {% set tg = snaps.telegram.data %}
+  {% if tg and tg.chats is defined %}
+  <section class="card wide">
+    <h2>Telegram {{ status(snaps.telegram) }}</h2>
+    {% set waiting = tg.chats | selectattr('waiting') | list %}
+    {% set rest = tg.chats | rejectattr('waiting') | list %}
+    {% if waiting %}<h3>✉️ Ждут ответа ({{ waiting|length }})</h3>
+      {% for c in waiting[:10] %}<div class="row"><b>{{ c.name }}</b> <span class="badge">{{ c.unread }}</span> <span class="muted small">{{ c.text }}</span></div>{% endfor %}
+    {% endif %}
+    {% if rest %}<h3>Непрочитанное в группах и ботах</h3>
+      {% for c in rest[:8] %}<div class="row small"><b>{{ c.name }}</b> {{ c.unread }}{% if c.mentions %} · <b>@ упоминаний: {{ c.mentions }}</b>{% endif %}</div>{% endfor %}
+    {% endif %}
+    {% if not tg.chats %}<p class="muted">Всё прочитано.</p>{% endif %}
+  </section>
+  {% endif %}
+
   <section class="card wide">
     <h2>План на день {% if plan %}<span class="badge">{{ plan.engine }}</span>{% endif %}</h2>
     {% if plan %}<div class="plan">{{ plan_html | safe }}</div>
