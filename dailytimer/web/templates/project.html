@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block content %}
+{% set st = PROJECT_STATUSES[p.status] %}
+{% set h = p.health or {} %}
+<div class="actions">
+  <h1>{{ p.name }}</h1>
+  <span class="chip">{{ st[1] }} {{ st[0] }}</span>
+  <a href="/projects" class="muted small">← все проекты</a>
+</div>
+{% if error %}<div class="card notice err">{{ error }}</div>{% endif %}
+{% if saved %}<div class="card notice">Сохранено.</div>{% endif %}
+{% if p.stale %}<div class="card notice">Сводка от {{ p.report_date }} — больше двух недель. Попроси у чата «{{ p.source_chat }}» свежую.</div>{% endif %}
+
+<div class="grid">
+  <section class="card">
+    <h2>Где сейчас</h2>
+    {% if p.progress is not none %}
+      <div class="progress"><div style="width: {{ p.progress }}%"></div></div>
+      <div class="muted small">{{ p.progress }}%</div>
+    {% endif %}
+    {% if p.summary %}<p class="small">{{ p.summary }}</p>{% endif %}
+    {% if p.stage %}<p class="small"><b>Этап:</b> {{ p.stage }}</p>{% endif %}
+    {% if p.current_focus %}<p class="small"><b>В работе:</b> {{ p.current_focus }}</p>{% endif %}
+    <p class="small muted">Сводка от {{ p.report_date }}{% if p.source_chat %} · чат: {{ p.source_chat }}{% endif %}</p>
+  </section>
+
+  <section class="card">
+    <h2>Доступность</h2>
+    {% if not p.health_url %}
+      <p class="small muted">В сводке нет адреса, который можно проверить с сервера.</p>
+    {% elif h.ok is none %}
+      <p class="small">⚪ Ещё не проверялся: {{ p.health_url }}</p>
+    {% elif h.ok %}
+      <p class="small">🟢 Отвечает: {{ h.code }}, {{ h.ms }} мс</p>
+    {% else %}
+      <p class="small err-text">🔴 Не отвечает: {{ h.error }}{% if h.down_since %} (с {{ h.down_since[:16]|replace('T', ' ') }} UTC){% endif %}</p>
+    {% endif %}
+    {% if p.health_url %}<p class="small"><a href="{{ p.health_url }}" target="_blank" rel="noopener">{{ p.health_url }}</a>{% if h.at %} · проверено {{ h.at[:16]|replace('T', ' ') }} UTC{% endif %}</p>{% endif %}
+    {% if p.health_check %}<p class="small muted">Как проверить: {{ p.health_check }}</p>{% endif %}
+    {% if p.server %}
+      <h3 class="small">На сервере</h3>
+      <p class="small"><code>{{ p.server.path }}</code> · ветка {{ p.server.branch }} · {{ (p.server.commit or '')[:7] }}
+        {% if p.server.behind %}<span class="chip warnc">отстаёт на {{ p.server.behind }}</span>{% endif %}
+        {% if p.server.ci %}<span class="chip">CI: {{ p.server.ci.conclusion or p.server.ci.status }}</span>{% endif %}
+        <a href="/server" class="small">обновить в разделе «Сервер»</a></p>
+    {% endif %}
+  </section>
+</div>
+
+<div class="grid" style="margin-top: 16px">
+  <section class="card">
+    <h2>Дальше</h2>
+    {% for s in p.next_steps %}<div class="row small">{{ loop.index }}. {{ s }}</div>{% else %}<p class="small muted">Не указано.</p>{% endfor %}
+  </section>
+  <section class="card">
+    <h2>Что мешает</h2>
+    {% for b in p.blockers %}<div class="row small">⚠ {{ b }}</div>{% else %}<p class="small muted">Ничего.</p>{% endfor %}
+  </section>
+</div>
+
+<div class="grid" style="margin-top: 16px">
+  <section class="card">
+    <h2>Где находится</h2>
+    {% set loc = p.location or {} %}
+    {% for key, label in [('repo', 'Репозиторий'), ('branch', 'Ветка'), ('url', 'Адрес'), ('server', 'Сервер'), ('deploy_path', 'На сервере'), ('local_path', 'Локально')] if loc[key] %}
+      <div class="row small"><b>{{ label }}:</b> {{ loc[key] }}</div>
+    {% endfor %}
+    {% if p.secrets_stored_in %}<div class="row small"><b>Секреты:</b> {{ p.secrets_stored_in }}</div>{% endif %}
+  </section>
+  <section class="card">
+    <h2>Как запустить и обновить</h2>
+    {% set run = p.run_and_deploy or {} %}
+    {% for key, label in [('run', 'Запуск'), ('update', 'Обновление'), ('logs', 'Логи')] if run[key] %}
+      <div class="row small"><b>{{ label }}:</b> <code>{{ run[key] }}</code></div>
+    {% else %}<p class="small muted">Не указано.</p>{% endfor %}
+  </section>
+</div>
+
+{% if p.how_it_works or p.stack or p.integrations or p.links or p.notes %}
+<section class="card" style="margin-top: 16px">
+  <h2>Как устроен</h2>
+  {% if p.how_it_works %}<p class="small">{{ p.how_it_works }}</p>{% endif %}
+  {% if p.stack %}<p>{% for s in p.stack %}<span class="chip">{{ s }}</span> {% endfor %}</p>{% endif %}
+  {% if p.integrations %}<p class="small"><b>Интеграции:</b> {{ p.integrations|join(', ') }}</p>{% endif %}
+  {% if p.links %}<p class="small"><b>Ссылки:</b>
+    {% for l in p.links %}{% if l.startswith('http') %}<a href="{{ l.split(' ')[0] }}" target="_blank" rel="noopener">{{ l }}</a>{% else %}{{ l }}{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+  {% if p.notes %}<p class="small muted">{{ p.notes }}</p>{% endif %}
+</section>
+{% endif %}
+
+<div class="grid" style="margin-top: 16px">
+  <section class="card">
+    <h2>Последние изменения</h2>
+    {% for c in p.recent_changes %}<div class="row small"><span class="muted">{{ c.date or '—' }}</span> {{ c.change }}</div>{% else %}<p class="small muted">Нет.</p>{% endfor %}
+  </section>
+  <section class="card">
+    <h2>История статуса</h2>
+    {% for h in p.history|reverse %}
+      <div class="row small"><span class="muted">{{ h.at[:10] }}</span> {{ PROJECT_STATUSES[h.status][0] }}{% if h.progress is not none %}, {{ h.progress }}%{% endif %}{% if h.stage %} — {{ h.stage }}{% endif %}</div>
+    {% endfor %}
+  </section>
+</div>
+
+<section class="card settings" style="margin-top: 16px">
+  <details><summary>Править вручную (JSON)</summary>
+    <form method="post" action="/projects/{{ p.id }}/edit">
+      <textarea name="report" rows="18" spellcheck="false">{{ editable }}</textarea>
+      <button class="primary">Сохранить</button>
+    </form>
+  </details>
+  <form method="post" action="/projects/{{ p.id }}/delete" onsubmit="return confirm('Удалить проект из DailyTimer?')">
+    <button class="danger">Удалить проект</button>
+  </form>
+</section>
+{% endblock %}

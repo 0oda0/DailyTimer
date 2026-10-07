@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% macro health(p) -%}
+  {%- set h = p.health or {} -%}
+  {%- if not p.health_url -%}<span class="chip muted" title="В сводке нет адреса для проверки">нет адреса</span>
+  {%- elif h.ok is none -%}<span class="chip muted">⚪ не проверялся</span>
+  {%- elif h.ok -%}<span class="chip okc" title="{{ h.url }} · {{ h.at }}">🟢 {{ h.code }} · {{ h.ms }} мс</span>
+  {%- else -%}<span class="chip red" title="{{ h.url }} · с {{ h.down_since or h.at }}">🔴 {{ h.error or 'не отвечает' }}</span>
+  {%- endif -%}
+{%- endmacro %}
+{% block content %}
+<div class="actions">
+  <h1>📁 Проекты</h1>
+  {% for code, (label, icon) in PROJECT_STATUSES.items() if counts.get(code) %}
+    <span class="chip">{{ icon }} {{ label }}: {{ counts[code] }}</span>
+  {% endfor %}
+  {% if projects %}
+  <form method="post" action="/projects/check" class="inline"><button>Проверить сайты</button></form>
+  {% endif %}
+</div>
+
+{% if result.error %}<div class="card notice err">{{ result.error }}</div>{% endif %}
+{% if result.added or result.updated %}
+  <div class="card notice">
+    {% if result.added %}Добавлено: {{ result.added }}. {% endif %}
+    {% if result.updated %}Обновлено: {{ result.updated }}.{% endif %}
+    {% if result.redacted %}<br><b>Вырезано похожих на секреты значений: {{ result.redacted }}</b> — пароли и токены сюда не попадают.{% endif %}
+  </div>
+{% endif %}
+{% if result.deleted %}<div class="card notice">Удалён проект «{{ result.deleted }}».</div>{% endif %}
+{% if result.checked %}<div class="card notice">Сайты проверены.</div>{% endif %}
+{% if down %}
+  <div class="card notice err">🔴 Не отвечают: {% for p in down %}<a href="/projects/{{ p.id }}">{{ p.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</div>
+{% endif %}
+
+<div class="grid">
+{% for p in projects %}
+  {% set st = PROJECT_STATUSES[p.status] %}
+  <section class="card proj">
+    <div class="proj-head">
+      <h2><a href="/projects/{{ p.id }}">{{ p.name }}</a></h2>
+      <span class="chip">{{ st[1] }} {{ st[0] }}</span>
+    </div>
+    {% if p.progress is not none %}
+      <div class="progress" title="{{ p.progress }}%"><div style="width: {{ p.progress }}%"></div></div>
+      <div class="muted small">{{ p.progress }}%</div>
+    {% endif %}
+    {% if p.stage %}<p class="small">{{ p.stage }}</p>{% endif %}
+    {% if p.next_steps %}<p class="small"><b>Дальше:</b> {{ p.next_steps[0] }}{% if p.next_steps|length > 1 %} <span class="muted">(+{{ p.next_steps|length - 1 }})</span>{% endif %}</p>{% endif %}
+    {% if p.blockers %}<p class="small err-text">⚠ {{ p.blockers[0] }}{% if p.blockers|length > 1 %} (+{{ p.blockers|length - 1 }}){% endif %}</p>{% endif %}
+    <div class="proj-meta">
+      {{ health(p) }}
+      {% if p.server %}
+        {% if p.server.behind %}<span class="chip warnc" title="{{ p.server.path }}">сервер отстаёт на {{ p.server.behind }}</span>
+        {% else %}<span class="chip okc" title="{{ p.server.path }}">на сервере: {{ p.server.branch }}</span>{% endif %}
+        {% if p.server.ci %}<span class="chip {{ 'okc' if p.server.ci.conclusion == 'success' else 'red' if p.server.ci.conclusion == 'failure' else '' }}">CI: {{ p.server.ci.conclusion or p.server.ci.status }}</span>{% endif %}
+      {% endif %}
+      {% if p.stale %}<span class="chip warnc" title="Попроси у того чата свежую сводку">сводка от {{ p.report_date }}</span>{% endif %}
+    </div>
+    <div class="muted small">
+      {% if p.health_url %}<a href="{{ p.health_url }}" target="_blank" rel="noopener">открыть</a> · {% endif %}
+      {% if p.source_chat %}из чата: {{ p.source_chat|truncate(70) }}{% endif %}
+    </div>
+  </section>
+{% else %}
+  <section class="card">
+    <h2>Пока пусто</h2>
+    <p class="small">Скопируй промпт ниже в каждый чат Claude, где шла работа над проектом, и вставь ответ сюда.</p>
+  </section>
+{% endfor %}
+</div>
+
+<div class="grid" style="margin-top: 16px">
+  <section class="card settings">
+    <h2>Добавить или обновить сводку</h2>
+    <p class="muted small">Вставь ответ чата целиком — можно сразу несколько. Проекты с тем же id обновятся,
+      история изменений сохранится. Похожие на пароли и токены значения вырезаются.</p>
+    <form method="post" action="/projects/import">
+      <textarea name="report" rows="10" spellcheck="false" placeholder='{"source_chat": "…", "projects": [ … ]}' required></textarea>
+      <button class="primary">Загрузить</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Промпт для других чатов</h2>
+    <p class="muted small">Вставь в чат с Claude — он ответит сводкой в нужном формате. Повторяй, когда проект продвинулся.</p>
+    <button type="button" class="primary" id="copy-prompt">Скопировать промпт</button>
+    <details style="margin-top: 8px"><summary class="small">Показать текст</summary>
+      <pre class="prompt" id="prompt-text">{{ prompt }}</pre>
+    </details>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById('copy-prompt').addEventListener('click', async (e) => {
+  const text = document.getElementById('prompt-text').textContent;
+  try { await navigator.clipboard.writeText(text); }
+  catch (_) {  // http без HTTPS: clipboard API недоступен
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  e.target.textContent = 'Скопировано ✓';
+  setTimeout(() => { e.target.textContent = 'Скопировать промпт'; }, 2000);
+});
+</script>
+{% endblock %}
