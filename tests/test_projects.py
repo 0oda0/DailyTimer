@@ -157,7 +157,8 @@ def test_projects_pages(tmp_path, monkeypatch):
     monkeypatch.setattr(projects_mod.httpx, "get", lambda *a, **k: (_ for _ in ()).throw(projects_mod.httpx.ConnectError("нет сети")))
     storage = Storage(tmp_path)
     storage.save_snapshot("server_projects", {"projects": [
-        {"name": "OBD", "path": "/opt/obd", "github": "0oda0/obd", "branch": "main", "commit": "abc1234def", "behind": 2}]})
+        {"name": "OBD", "path": "/opt/obd", "github": "0oda0/obd", "branch": "main", "behind": 2,
+         "commit": {"hash": "abc1234", "message": "fix", "date": "2026-10-07T10:00:00"}}]})
     client = TestClient(create_app(storage, start_scheduler=False))
     page = client.get("/projects").text
     assert "Пока пусто" in page and "Скопировать промпт" in page and 'href="/projects"' in page
@@ -171,6 +172,7 @@ def test_projects_pages(tmp_path, monkeypatch):
 
     detail = client.get("/projects/obd-site").text
     assert "Первая проверка на машине" in detail and "HTTPS на IP" in detail and "/opt/obd" in detail
+    assert "abc1234" in detail and "отстаёт на 2" in detail
     edited = json.loads(json.dumps({**REPORT["projects"][0], "stage": "Исправлено вручную", "blockers": []}))
     r = client.post("/projects/obd-site/edit", data={"report": json.dumps(edited, ensure_ascii=False)})
     assert "Сохранено" in r.text and "Исправлено вручную" in r.text

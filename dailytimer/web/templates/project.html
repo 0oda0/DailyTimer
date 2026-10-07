@@ -39,7 +39,7 @@
     {% if p.health_check %}<p class="small muted">Как проверить: {{ p.health_check }}</p>{% endif %}
     {% if p.server %}
       <h3 class="small">На сервере</h3>
-      <p class="small"><code>{{ p.server.path }}</code> · ветка {{ p.server.branch }} · {{ (p.server.commit or '')[:7] }}
+      <p class="small"><code>{{ p.server.path }}</code> · ветка {{ p.server.branch }} · {{ p.server.commit.hash if p.server.commit is mapping else (p.server.commit or '')[:7] }}
         {% if p.server.behind %}<span class="chip warnc">отстаёт на {{ p.server.behind }}</span>{% endif %}
         {% if p.server.ci %}<span class="chip">CI: {{ p.server.ci.conclusion or p.server.ci.status }}</span>{% endif %}
         <a href="/server" class="small">обновить в разделе «Сервер»</a></p>
