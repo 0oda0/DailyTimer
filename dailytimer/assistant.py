@@ -21,6 +21,7 @@ from . import planner, sync
 from .ai import AIClient, AIError
 from .life import Habits
 from .memory import Memory
+from .projects import Projects
 from .storage import Storage
 from .tasks import PRIORITY_NAMES, Tasks, auto_schedule, decorate, parse_quick
 
@@ -266,7 +267,8 @@ class Assistant:
     def context(self, today: date) -> str:
         settings = self.db.get_settings()
         data = sync.collect(self.db)
-        parts = [planner.build_context({**data, "memory": Memory(self.db).prompt_block()}, settings, today)]
+        parts = [planner.build_context({**data, "memory": Memory(self.db).prompt_block(),
+                                        "projects": Projects(self.db).prompt_block()}, settings, today)]
         views = self.tasks.views(today)
         task_lines = []
         for key, title in (("overdue", "просрочено"), ("today", "сегодня"), ("upcoming", "на неделе"),

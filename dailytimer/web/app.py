@@ -30,6 +30,7 @@ from ..tasks import Tasks, timeline
 from ..sorter import CATEGORIES
 from ..storage import DEFAULT_SETTINGS, SECRET_FIELDS, Storage
 from .planner_routes import register as register_planner
+from .projects_routes import register as register_projects
 from .server_routes import register as register_server
 from .sections import SECTIONS, section_status
 
@@ -110,6 +111,8 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
             morning, CronTrigger(hour=hour, minute=minute, timezone=tz), id="plan", replace_existing=True
         )
         scheduler.add_job(lambda: bot.send_reminders(storage), "interval", minutes=1, id="reminders",
+                          replace_existing=True)
+        scheduler.add_job(lambda: sync.check_projects(storage), "interval", minutes=10, id="projects",
                           replace_existing=True)
 
         def weekly_purge() -> None:
@@ -382,6 +385,7 @@ def create_app(storage: Storage | None = None, start_scheduler: bool = True) -> 
 
     register_planner(app, storage, templates, auth, render_markdown)
     register_server(app, storage, templates, auth)
+    register_projects(app, storage, templates, auth)
 
     @app.get("/healthz")
     def health() -> dict[str, str]:

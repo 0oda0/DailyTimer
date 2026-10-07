@@ -305,6 +305,15 @@ def refresh_projects(storage: Storage, settings: dict[str, Any], agent: "vps.Age
     storage.save_snapshot("server_projects", {"projects": projects})
 
 
+def check_projects(storage: Storage, notify_changes: bool = True) -> None:
+    """Проверяет сайты проектов из раздела «Проекты»; о падении и восстановлении пишет в Telegram."""
+    from .projects import Projects, health_message
+
+    changes = Projects(storage).check_health()
+    if notify_changes and changes:
+        notify(storage, storage.get_settings(), health_message(changes))
+
+
 # ------------------------------------------------------------------ всё вместе
 
 def sync_all(storage: Storage, force: bool = False) -> dict[str, str | None]:
@@ -403,6 +412,9 @@ def build_plan(storage: Storage, send: bool = False) -> dict[str, Any]:
     from .memory import Memory
 
     data["memory"] = Memory(storage).prompt_block()
+    from .projects import Projects
+
+    data["projects"] = Projects(storage).prompt_block()
     content, engine = planner.make_plan(data, settings, today)
     storage.save_plan(today.isoformat(), content, engine)
     if send:

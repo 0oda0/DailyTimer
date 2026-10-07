@@ -23,7 +23,8 @@ _SYSTEM = """Ты — личный ассистент-планировщик с�
 
 def build_context(data: dict[str, Any], settings: dict[str, Any], today: date) -> str:
     memory = data.get("memory") or ""
-    lines = ([memory, ""] if memory else []) + [
+    projects = data.get("projects") or ""
+    lines = ([memory, ""] if memory else []) + ([projects, ""] if projects else []) + [
         f"Сегодня: {today.isoformat()} ({['пн','вт','ср','чт','пт','сб','вс'][today.weekday()]})",
         f"Подъём: {settings.get('wake_time')}, отбой: {settings.get('sleep_time')}",
     ]
